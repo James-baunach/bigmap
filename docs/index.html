@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Louisville Wall Map Maker</title>
+<meta name="description" content="Design a printable, unlabeled wall map of Louisville, Kentucky sized to your wall and your printer paper.">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <svg class="mark" viewBox="-1 -1.05 2 2.1" aria-hidden="true"><g transform="scale(1,-1)" fill="currentColor">
+    <path d="M0 1C.1.82.27.58.25.32.23.12.12 0 .07-.1h-.14C-.12 0-.23.12-.25.32-.27.58-.1.82 0 1z"/>
+    <path d="M.1-.1C.15.12.3.44.53.46.74.48.86.28.8.1.76-.02.63-.08.54-.02.62.02.66.14.59.21.5.29.4.2.35.08.32 0 .3-.05.29-.1z"/>
+    <path d="M-.1-.1C-.15.12-.3.44-.53.46-.74.48-.86.28-.8.1-.76-.02-.63-.08-.54-.02-.62.02-.66.14-.59.21-.5.29-.4.2-.35.08-.32 0-.3-.05-.29-.1z"/>
+    <rect x="-.34" y="-.245" width=".68" height=".13"/>
+    <path d="M-.07-.26h.14C.1-.42.06-.62 0-.8-.06-.62-.1-.42-.07-.26z"/>
+    <path d="M.11-.26h.18C.31-.36.38-.44.5-.47.36-.54.19-.48.11-.26z"/>
+    <path d="M-.11-.26h-.18C-.31-.36-.38-.44-.5-.47-.36-.54-.19-.48-.11-.26z"/>
+  </g></svg>
+  <div>
+    <h1>Louisville Wall Map Maker</h1>
+    <p>Size it to your wall, frame the part of the city you want, and print it on your own printer.</p>
+  </div>
+</header>
+
+<main>
+  <aside id="panel">
+    <section>
+      <h2><span>1</span> Wall size</h2>
+      <div class="dims">
+        <label>Width
+          <span class="pair"><input id="wFt" type="number" min="0" max="16" step="1" value="10" inputmode="numeric"><i>ft</i>
+          <input id="wIn" type="number" min="0" max="11.5" step="0.5" value="0" inputmode="decimal"><i>in</i></span>
+        </label>
+        <label>Height
+          <span class="pair"><input id="hFt" type="number" min="0" max="16" step="1" value="10" inputmode="numeric"><i>ft</i>
+          <input id="hIn" type="number" min="0" max="11.5" step="0.5" value="0" inputmode="decimal"><i>in</i></span>
+        </label>
+      </div>
+      <p class="hint">The finished map, including a 0.5 in white paper border, comes out exactly this size. Between 2 and 16 ft each way.</p>
+    </section>
+
+    <section>
+      <h2><span>2</span> Paper</h2>
+      <div class="seg" role="radiogroup" aria-label="Paper size">
+        <label><input type="radio" name="paper" value="letter" checked><b>Letter</b><small>8.5 x 11 in</small></label>
+        <label><input type="radio" name="paper" value="legal"><b>Legal</b><small>8.5 x 14 in</small></label>
+      </div>
+      <label class="row">Page direction
+        <select id="orient">
+          <option value="auto">Fewest pages (automatic)</option>
+          <option value="portrait">Portrait</option>
+          <option value="landscape">Landscape</option>
+        </select>
+      </label>
+    </section>
+
+    <section>
+      <h2><span>3</span> Style</h2>
+      <div id="themes" class="themes"></div>
+      <p class="hint">Optional illustrated touches (work with any style):</p>
+      <div class="checks">
+        <label><input id="oTrees" type="checkbox"> Little trees in the woods</label>
+        <label><input id="oWaves" type="checkbox"> Ripples on the water</label>
+        <label><input id="oShadows" type="checkbox"> Building outlines and shadows</label>
+      </div>
+    </section>
+
+    <section>
+      <h2><span>4</span> Position the map</h2>
+      <p class="hint">Drag the map to move it. Scroll, pinch or use the slider to zoom, right down to a single neighborhood.</p>
+      <label class="row">Zoom
+        <input id="zoom" type="range" min="0" max="1000" value="0">
+      </label>
+      <label class="row">Jump to
+        <select id="place"><option value="">Choose a neighborhood...</option></select>
+      </label>
+      <div class="btns">
+        <button id="fitAll" type="button">Show whole area</button>
+        <button id="goDowntown" type="button">Center on downtown</button>
+      </div>
+      <div class="checks">
+        <label><input id="oBorder" type="checkbox" checked> Border frame</label>
+        <label><input id="oCompass" type="checkbox" checked> Compass rose</label>
+        <label><input id="oRings" type="checkbox" checked> Distance rings from downtown</label>
+        <label><input id="oGrid" type="checkbox" checked> Show page seams (preview only)</label>
+      </div>
+    </section>
+
+    <section class="summary">
+      <dl>
+        <div><dt>Pages</dt><dd id="sPages">-</dd></div>
+        <div><dt>Map scale</dt><dd id="sScale">-</dd></div>
+        <div><dt>Area shown</dt><dd id="sArea">-</dd></div>
+        <div><dt>White border</dt><dd id="sBorder">-</dd></div>
+      </dl>
+    </section>
+
+    <section>
+      <h2><span>5</span> Download</h2>
+      <button id="dlPages" class="primary" type="button">Download printable pages (PDF)</button>
+      <button id="dlSheet" type="button">Download single sheet (PDF, for a print shop)</button>
+      <div id="progress" hidden><div id="bar"></div><span id="ptext"></span></div>
+      <p class="hint">Page 1 of the printable PDF is an assembly guide. Print at Actual size / 100%.</p>
+    </section>
+
+    <footer>Map data &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>. The preview is lower resolution than the PDF.</footer>
+  </aside>
+
+  <div id="stage"><canvas id="view" aria-label="Map preview. Drag to move, scroll to zoom."></canvas></div>
+</main>
+
+<script src="mapdata.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
