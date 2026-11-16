@@ -71,6 +71,12 @@ input:focus-visible, select:focus-visible, button:focus-visible, .seg label:focu
 .seg label:has(input:checked) { border-color: var(--ink); background: var(--ink); color: #fff; }
 .seg label:has(input:checked) small { color: #c9d1d8; }
 
+.seg.thirds { grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+.seg.thirds label { padding: 6px 7px; font-size: 13px; }
+.seg.thirds small { font-size: 11px; }
+.hint.subhead { margin-top: 16px; font-weight: 600; color: var(--ink); }
+.checks.tight { margin-top: 8px; }
+
 .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
 button {
   font: inherit; font-weight: 600; color: var(--ink); background: #fff; cursor: pointer;

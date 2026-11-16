@@ -1,0 +1,170 @@
+[
+ {
+  "id": "belle-of-louisville",
+  "name": "Belle of Louisville",
+  "kind": "boat",
+  "x": 3056.4,
+  "y": 5797.8
+ },
+ {
+  "id": "big-four-bridge",
+  "name": "Big Four Bridge",
+  "kind": "bridge",
+  "x": 3321.4,
+  "y": 5916.2
+ },
+ {
+  "id": "bowman-field",
+  "name": "Bowman Field",
+  "kind": "airport",
+  "x": 4523.4,
+  "y": 5181.9
+ },
+ {
+  "id": "cherokee-park",
+  "name": "Cherokee Park (Hogan's Fountain)",
+  "kind": "park",
+  "x": 3984.1,
+  "y": 5404.6
+ },
+ {
+  "id": "churchill-downs",
+  "name": "Churchill Downs",
+  "kind": "racetrack",
+  "x": 2809.9,
+  "y": 4663.6
+ },
+ {
+  "id": "clark-memorial-bridge",
+  "name": "Clark Memorial (Second Street) Bridge",
+  "kind": "bridge",
+  "x": 3123.2,
+  "y": 5905.3
+ },
+ {
+  "id": "colgate-clock",
+  "name": "Colgate Clock (Colgate Park, Clarksville)",
+  "kind": "clock",
+  "x": 3025.7,
+  "y": 6212.4
+ },
+ {
+  "id": "falls-of-the-ohio",
+  "name": "Falls of the Ohio Interpretive Center",
+  "kind": "fossils",
+  "x": 2934.9,
+  "y": 6146.3
+ },
+ {
+  "id": "iroquois-park",
+  "name": "Iroquois Park (Amphitheater)",
+  "kind": "park",
+  "x": 2671.7,
+  "y": 3824.8
+ },
+ {
+  "id": "kentucky-expo-center",
+  "name": "Kentucky Exposition Center",
+  "kind": "arena",
+  "x": 3286.7,
+  "y": 4606.0
+ },
+ {
+  "id": "kfc-yum-center",
+  "name": "KFC Yum! Center",
+  "kind": "arena",
+  "x": 3085.4,
+  "y": 5769.0
+ },
+ {
+  "id": "l-and-n-stadium",
+  "name": "L&N Federal Credit Union Stadium",
+  "kind": "stadium",
+  "x": 3007.7,
+  "y": 4736.8
+ },
+ {
+  "id": "locust-grove",
+  "name": "Locust Grove",
+  "kind": "house",
+  "x": 4524.8,
+  "y": 6354.9
+ },
+ {
+  "id": "louisville-airport",
+  "name": "Louisville Muhammad Ali International Airport",
+  "kind": "airport",
+  "x": 3282.7,
+  "y": 4317.9
+ },
+ {
+  "id": "louisville-slugger-field",
+  "name": "Louisville Slugger Field",
+  "kind": "ballpark",
+  "x": 3230.9,
+  "y": 5743.5
+ },
+ {
+  "id": "louisville-slugger-museum",
+  "name": "Louisville Slugger Museum",
+  "kind": "bat",
+  "x": 2928.0,
+  "y": 5752.1
+ },
+ {
+  "id": "louisville-water-tower",
+  "name": "Louisville Water Tower",
+  "kind": "tower",
+  "x": 3909.9,
+  "y": 6224.9
+ },
+ {
+  "id": "louisville-zoo",
+  "name": "Louisville Zoo",
+  "kind": "zoo",
+  "x": 3845.1,
+  "y": 4727.4
+ },
+ {
+  "id": "lynn-family-stadium",
+  "name": "Lynn Family Stadium",
+  "kind": "stadium",
+  "x": 3418.6,
+  "y": 5801.2
+ },
+ {
+  "id": "muhammad-ali-center",
+  "name": "Muhammad Ali Center",
+  "kind": "museum",
+  "x": 2989.0,
+  "y": 5780.9
+ },
+ {
+  "id": "speed-art-museum",
+  "name": "Speed Art Museum",
+  "kind": "museum",
+  "x": 2974.5,
+  "y": 4974.7
+ },
+ {
+  "id": "st-james-court-fountain",
+  "name": "St. James Court Fountain",
+  "kind": "fountain",
+  "x": 2938.1,
+  "y": 5177.0
+ },
+ {
+  "id": "university-of-louisville",
+  "name": "University of Louisville (Grawemeyer Hall)",
+  "kind": "university",
+  "x": 2986.7,
+  "y": 4918.7
+ },
+ {
+  "id": "waterfront-park",
+  "name": "Waterfront Park",
+  "kind": "park",
+  "x": 3417.0,
+  "y": 5891.2
+ }
+]

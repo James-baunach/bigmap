@@ -70,6 +70,19 @@
     <section>
       <h2><span>3</span> Style</h2>
       <div id="themes" class="themes"></div>
+      <p class="hint">Drawing:</p>
+      <div class="seg" role="radiogroup" aria-label="Drawing">
+        <label><input type="radio" name="draw" value="clean" checked><b>Clean</b><small>Crisp lines</small></label>
+        <label><input type="radio" name="draw" value="ink"><b>Hand-drawn ink</b><small>Wobbly pen lines</small></label>
+        <label><input type="radio" name="draw" value="pencil"><b>Pencil sketch</b><small>Grey and hatched</small></label>
+        <label><input type="radio" name="draw" value="block"><b>Block print</b><small>Bold and carved</small></label>
+      </div>
+      <p class="hint">Detail:</p>
+      <div class="seg" role="radiogroup" aria-label="Detail">
+        <label><input type="radio" name="detail" value="full" checked><b>Full</b><small>Every building and path</small></label>
+        <label><input type="radio" name="detail" value="simple"><b>Simplified</b><small>Fewer small things</small></label>
+      </div>
+      <p class="hint note" id="styleHint" hidden>Zoom in to see the drawing style in the preview. The printed pages will have it.</p>
       <p class="hint">Optional illustrated touches (work with any style):</p>
       <div class="checks">
         <label><input id="oTrees" type="checkbox"> Little trees in the woods</label>
@@ -120,7 +133,21 @@
         <label><input id="oStreets" type="checkbox"> Street names</label>
         <label><input id="oPlaces" type="checkbox"> Neighborhood and city names</label>
         <label><input id="oTerrain" type="checkbox"> Terrain shading</label>
+        <label><input id="oLandmarks" type="checkbox"> Landmark drawings</label>
       </div>
+      <p class="hint">Lettering for names and the title:</p>
+      <div class="seg thirds" role="radiogroup" aria-label="Lettering">
+        <label><input type="radio" name="lettering" value="plain" checked><b>Plain</b><small>Simple type</small></label>
+        <label><input type="radio" name="lettering" value="hand"><b>Hand-lettered</b><small>Friendly</small></label>
+        <label><input type="radio" name="lettering" value="antique"><b>Antique</b><small>Engraved</small></label>
+      </div>
+      <p class="hint subhead">Old chart details</p>
+      <div class="checks tight">
+        <label><input id="oShore" type="checkbox"> Shore lines on the water</label>
+        <label><input id="oHach" type="checkbox"> Hachured hills</label>
+        <label><input id="oOrnate" type="checkbox"> Ornate compass and ribbon title</label>
+      </div>
+      <p class="hint">Landmark drawings mark about two dozen well-known places. Hachures are fine strokes down the slopes.</p>
       <label class="row">Terrain strength
         <input id="terrAmt" type="range" min="10" max="100" step="5" value="60" disabled>
         <output id="terrVal">60%</output>
@@ -181,7 +208,7 @@
       <p class="hint">Page 1 of the printable PDF is an assembly guide. Print at Actual size / 100%.</p>
     </section>
 
-    <footer>Map data &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>. Neighborhood boundaries: LOJIC / Louisville Metro open data. Elevation: Mapzen / AWS Terrain Tiles (USGS 3DEP and other sources). The preview is lower resolution than the PDF.</footer>
+    <footer>Map data &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>. Neighborhood boundaries: LOJIC / Louisville Metro open data. Elevation: Mapzen / AWS Terrain Tiles (USGS 3DEP and other sources). Lettering fonts: Patrick Hand and IM Fell English, used under the SIL Open Font License. The preview is lower resolution than the PDF.</footer>
   </aside>
 
   <div id="stage"><canvas id="view" aria-label="Map preview. Drag to move, scroll to zoom."></canvas></div>
