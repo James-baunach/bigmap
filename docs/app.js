@@ -5,6 +5,7 @@ const M = window.MAPMETA, LAYERS = window.LAYERS, C = M.colors;
 const NSRC = Math.max(...LAYERS.map(l => l.src)) + 1;
 const TILESET = new Set(M.tiles);
 const BLEED = 10.8;          // 0.15 in of extra map past interior trim lines
+const PAPERS = { letter: [612, 792], legal: [612, 1008], a4: [595.28, 841.89], tabloid: [792, 1224] };   // [short, long] in points
 const MILE = 288;            // base units per mile (base: 72 units = 1/4 mile)
 const MAXK = 20;            // closest zoom: 1 in = about 66 ft
 const hexOf = s => '#' + s.split(' ').map(v => Math.round(v * 255).toString(16).padStart(2, '0')).join('');
@@ -126,19 +127,25 @@ const state = {
   zoom: 1, cx: M.size / 2, cy: M.size / 2,
   border: true, compass: true, rings: true, grid: true,
   theme: 'classic', trees: false, waves: false, shadows: false,
+  title: '', subtitle: '', tpos: 'br',          // optional title block: tpos is 'br' | 'bc' | 'tc'
+  markers: [],                                  // [{ t: 'heart'|'star'|'house'|'pin', x, y }] in base coordinates
+  hood: '',                                     // name of the highlighted neighborhood or city ('' = none)
+  labStreets: false, labPlaces: false,          // optional street names / neighborhood and city names
+  terrain: false, terrainAmt: 60,               // optional terrain shading and its strength in percent
 };
 
 /* ------------------------------------------------------------ layout */
 const EDGE = 36;             // white paper border around the finished map: 0.5 in
 function layout() {
   const W = state.wallW * 72, H = state.wallH * 72;
-  const short = 612, long = state.paper === 'legal' ? 1008 : 792;
+  const [short, long] = PAPERS[state.paper] || PAPERS.letter;
   const mapW = W - 2 * EDGE, mapH = H - 2 * EDGE;
   const opts = [];
   for (const [pw, ph, name] of [[short, long, 'portrait'], [long, short, 'landscape']]) {
     if (state.orient !== 'auto' && state.orient !== name) continue;
-    const cols = Math.max(2, Math.ceil(mapW / (pw - 2 * EDGE) - 1e-9));
-    const rows = Math.max(2, Math.ceil(mapH / (ph - 2 * EDGE) - 1e-9));
+    // one column or row is allowed when the map fits; the page code then centres the map on the sheet
+    const cols = Math.max(1, Math.ceil(mapW / (pw - 2 * EDGE) - 1e-9));
+    const rows = Math.max(1, Math.ceil(mapH / (ph - 2 * EDGE) - 1e-9));
     opts.push({ W, H, pw, ph, name, cols, rows, advX: mapW / cols, advY: mapH / rows, mx: EDGE, my: EDGE, mapW, mapH });
   }
   opts.sort((a, b) => a.cols * a.rows - b.cols * b.rows);
@@ -251,12 +258,161 @@ function compass(ctx, cx, cy, r, pal) {
   ctx.restore();
 }
 
-function drawOverlay(ctx, g, opt) {
+/* ---- text support shared by the preview and the PDF.
+   The PDF uses the standard Type1 fonts (Helvetica, Times), so only WinAnsi characters can be printed.
+   Widths are measured on a canvas with Arial / Times New Roman, which are metric-compatible with them. */
+const CP1252 = { 0x20AC: 0x80, 0x201A: 0x82, 0x0192: 0x83, 0x201E: 0x84, 0x2026: 0x85, 0x2020: 0x86, 0x2021: 0x87, 0x02C6: 0x88, 0x2030: 0x89,
+  0x0160: 0x8A, 0x2039: 0x8B, 0x0152: 0x8C, 0x017D: 0x8E, 0x2018: 0x91, 0x2019: 0x92, 0x201C: 0x93, 0x201D: 0x94, 0x2022: 0x95, 0x2013: 0x96,
+  0x2014: 0x97, 0x02DC: 0x98, 0x2122: 0x99, 0x0161: 0x9A, 0x203A: 0x9B, 0x0153: 0x9C, 0x017E: 0x9E, 0x0178: 0x9F };
+const winAnsi = s => [...String(s)].map(ch => {
+  const c = ch.codePointAt(0);
+  return (c >= 32 && c < 127) || (c >= 160 && c < 256) || CP1252[c] ? ch : '?';
+}).join('');
+const pdfStr = s => {                       // PDF literal string body: escapes ( ) \ and writes non-ASCII as octal bytes
+  let out = '';
+  for (const ch of s) {
+    const c = ch.codePointAt(0), b = CP1252[c] || c;
+    if (b === 40 || b === 41 || b === 92) out += '\\' + ch;
+    else if (b < 32 || b > 126) out += '\\' + b.toString(8).padStart(3, '0');
+    else out += ch;
+  }
+  return out;
+};
+const SERIF = '"Times New Roman", Times, serif', SANS = 'Arial, Helvetica, sans-serif';
+const tmeas = document.createElement('canvas').getContext('2d');
+const textW = (font, s) => { tmeas.font = font; return tmeas.measureText(s).width; };
+/* map a CSS-like font string ("bold 12px "Times New Roman", serif") to a PDF font resource name and size */
+function pdfFont(font) {
+  const m = /([\d.]+)px\s*(.*)$/.exec(font) || [];
+  const size = parseFloat(m[1]) || 10, fam = m[2] || '';
+  const bold = /\b(bold|[6-9]00)\b/.test(font), ital = /\b(italic|oblique)\b/.test(font);
+  if (/^\s*["']?(Times|Georgia|serif)/i.test(fam)) return { key: bold ? 'F4' : ital ? 'F5' : 'F3', size };
+  return { key: bold ? 'F2' : 'F1', size };
+}
+
+function drawMarker(ctx, t, x, y, s, pal) {
+  ctx.save();
+  ctx.translate(x, t === 'pin' ? y - s * .5 : y);      // a pin points at its spot with its tip
+  ctx.scale(s, s);
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  if (t === 'heart') {
+    ctx.moveTo(0, .46);
+    ctx.bezierCurveTo(-.14, .33, -.5, .06, -.5, -.2);
+    ctx.bezierCurveTo(-.5, -.45, -.15, -.5, 0, -.22);
+    ctx.bezierCurveTo(.15, -.5, .5, -.45, .5, -.2);
+    ctx.bezierCurveTo(.5, .06, .14, .33, 0, .46);
+  } else if (t === 'star') {
+    for (let i = 0; i < 10; i++) {
+      const a = i * Math.PI / 5, r = i % 2 ? .22 : .5;
+      if (i) ctx.lineTo(r * Math.sin(a), -r * Math.cos(a) + .04); else ctx.moveTo(r * Math.sin(a), -r * Math.cos(a) + .04);
+    }
+  } else if (t === 'house') {
+    ctx.moveTo(0, -.5); ctx.lineTo(.5, -.04); ctx.lineTo(.36, -.04); ctx.lineTo(.36, .46);
+    ctx.lineTo(-.36, .46); ctx.lineTo(-.36, -.04); ctx.lineTo(-.5, -.04);
+  } else {
+    ctx.moveTo(0, .5);
+    ctx.bezierCurveTo(-.12, .28, -.34, .12, -.34, -.12);
+    ctx.bezierCurveTo(-.34, -.34, -.18, -.5, 0, -.5);
+    ctx.bezierCurveTo(.18, -.5, .34, -.34, .34, -.12);
+    ctx.bezierCurveTo(.34, .12, .12, .28, 0, .5);
+  }
+  ctx.closePath();
+  ctx.lineWidth = .17; ctx.strokeStyle = pal.paper; ctx.stroke();
+  ctx.fillStyle = pal.accent; ctx.fill();
+  if (t === 'house') { ctx.fillStyle = pal.paper; ctx.beginPath(); ctx.rect(-.085, .14, .17, .32); ctx.fill(); }
+  if (t === 'pin') { ctx.fillStyle = pal.paper; circ(ctx, 0, -.14, .13); ctx.fill(); }
+  ctx.restore();
+}
+
+/* the optional title block (a cartouche); nothing is drawn unless a title was typed */
+function drawTitle(ctx, g, opt, pal, B) {
+  const title = winAnsi((opt.title || '').trim()), sub = winAnsi((opt.subtitle || '').trim());
+  if (!title) return;
+  const { mapW, mapH, o } = g;
+  const m = (opt.border ? B : 0) + (opt.border ? 16 : 26) * o;       // distance from the map edge
+  const wPerU = Math.max(textW(`bold 100px ${SERIF}`, title) * .46, sub ? textW(`italic 100px ${SERIF}`, sub) * .23 : 0, 170) + 68;
+  const hPerU = sub ? 123.5 : 87;
+  const rc = 400 * o * (Math.min(mapW, mapH) < 3600 ? .8 : 1);
+  const compassEnd = opt.compass ? (opt.border ? B : 0) + rc * 2.94 + 24 * o : 0;   // right edge of the compass rose plus a gap
+  const avail = opt.tpos === 'tc' ? mapW - 2 * m : opt.tpos === 'bc' ? 2 * (mapW / 2 - Math.max(compassEnd, m)) : mapW - m - Math.max(compassEnd, m);
+  const O = o * 1.55;                                                // the title block is a little bigger than the other ornaments
+  const u = Math.max(O * .3, Math.min(O, avail / wPerU));
+  const w = wPerU * u, h = hPerU * u;
+  const x = opt.tpos === 'br' ? mapW - m - w : (mapW - w) / 2;
+  const y = opt.tpos === 'tc' ? m : mapH - m - h;
+  const T = 46 * u, S = 23 * u;
+  ctx.save();
+  ctx.lineCap = 'butt';
+  ctx.globalAlpha = .94; ctx.fillStyle = pal.paper;
+  ctx.beginPath(); ctx.rect(x, y, w, h); ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = pal.ink; ctx.lineWidth = 2.4 * u;
+  ctx.beginPath(); ctx.rect(x, y, w, h); ctx.stroke();
+  ctx.strokeStyle = pal.gold; ctx.lineWidth = 1.1 * u;
+  ctx.beginPath(); ctx.rect(x + 6 * u, y + 6 * u, w - 12 * u, h - 12 * u); ctx.stroke();
+  ctx.textAlign = 'center';
+  ctx.fillStyle = pal.ink; ctx.font = `bold ${f5(T)}px ${SERIF}`;
+  const ty = y + 22 * u + .72 * T;
+  ctx.fillText(title, x + w / 2, ty);
+  if (sub) {
+    const ry = ty + 15 * u;
+    ctx.strokeStyle = pal.gold; ctx.lineWidth = 1.1 * u;
+    ctx.beginPath(); ctx.moveTo(x + w * .2, ry); ctx.lineTo(x + w / 2 - 8 * u, ry); ctx.moveTo(x + w / 2 + 8 * u, ry); ctx.lineTo(x + w * .8, ry); ctx.stroke();
+    ctx.fillStyle = pal.gold;
+    ctx.beginPath(); ctx.moveTo(x + w / 2, ry - 4 * u); ctx.lineTo(x + w / 2 + 4 * u, ry); ctx.lineTo(x + w / 2, ry + 4 * u); ctx.lineTo(x + w / 2 - 4 * u, ry); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = pal.ink; ctx.font = `italic ${f5(S)}px ${SERIF}`;
+    ctx.fillText(sub, x + w / 2, ry + 10 * u + .72 * S);
+  }
+  ctx.restore();
+}
+
+/* Neighborhood highlight: a paper-coloured veil over everything outside the chosen area (even-odd fill of a big
+   rectangle plus the boundary rings) and a crisp outline in the accent colour. Rings that cannot touch the view
+   are skipped and points closer than a quarter point are dropped, so the per-page cost stays small. */
+function drawHighlight(ctx, g, opt, pal) {
+  const h = hoodByName(opt.hood);
+  if (!h) return;
+  const { mapW, mapH, k, o } = g;
+  const rings = [];
+  for (const b of h.bb) {
+    if (b[2] < g.x0 - 8 || b[0] > g.x0 + g.vw + 8 || b[3] < g.y0 - 8 || b[1] > g.y0 + g.vh + 8) continue;
+    const r = b[4], pts = [];
+    let lx = 1e18, ly = 1e18;
+    for (let i = 0; i < r.length; i += 2) {
+      const x = Math.round((r[i] - g.x0) * k * 100) / 100, y = Math.round((mapH - (r[i + 1] - g.y0) * k) * 100) / 100;
+      if (Math.abs(x - lx) + Math.abs(y - ly) < .25) continue;
+      pts.push(x, y); lx = x; ly = y;
+    }
+    if (pts.length >= 6) rings.push(pts);
+  }
+  const trace = () => {
+    for (const pts of rings) {
+      ctx.moveTo(pts[0], pts[1]);
+      for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]);
+      ctx.closePath();
+    }
+  };
+  ctx.save();
+  ctx.globalAlpha = HOOD_FADE; ctx.fillStyle = pal.paper;
+  ctx.beginPath(); ctx.rect(-2, -2, mapW + 4, mapH + 4); trace(); ctx.fill('evenodd');
+  ctx.globalAlpha = 1;
+  if (rings.length) {
+    ctx.strokeStyle = pal.accent; ctx.lineWidth = Math.max(1.5, 4.5 * o); ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.setLineDash([]);
+    ctx.beginPath(); trace(); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* `mid(ctx)` is called after the highlight and distance rings and before markers, compass, border and title: that is
+   where the optional street and place names go. */
+function drawOverlay(ctx, g, opt, mid) {
   const { mapW, mapH, k, o } = g;
   const pal = THEMES[opt.theme].ov;
   const ink = pal.ink, gold = pal.gold, white = pal.paper;
   const fx = bx => (bx - g.x0) * k, fy = by => mapH - (by - g.y0) * k;
 
+  if (opt.hood) drawHighlight(ctx, g, opt, pal);
   if (opt.rings) {
     const gx = fx(M.center[0]), gy = fy(M.center[1]);
     const dx = Math.max(0, -gx, gx - mapW), dy = Math.max(0, -gy, gy - mapH);
@@ -291,8 +447,17 @@ function drawOverlay(ctx, g, opt) {
     fleur(ctx, gx, gy + 1 * o, 10.5 * o, 0, gold);
     ctx.restore();
   }
+  if (mid) mid(ctx);
 
   const B = opt.border ? 108 * o : 0;
+  if (opt.markers && opt.markers.length) {
+    const ms = 72 * o;
+    for (const mk of opt.markers) {
+      const sx = fx(mk.x), sy = fy(mk.y);
+      if (sx < -ms || sx > mapW + ms || sy < -ms || sy > mapH + ms) continue;
+      drawMarker(ctx, mk.t, sx, sy, ms, pal);
+    }
+  }
   if (opt.compass) {
     const r = 400 * o * (Math.min(mapW, mapH) < 3600 ? .8 : 1);
     compass(ctx, B + r * 1.6, mapH - B - r * 1.52, r, pal);
@@ -345,6 +510,7 @@ function drawOverlay(ctx, g, opt) {
     }
     ctx.restore();
   }
+  drawTitle(ctx, g, opt, pal, B);
 }
 
 /* ------------------------------------------------------------ preview */
@@ -400,23 +566,19 @@ function canvasPattern(ctx, pat, px) {
   drawPatternTile(t, pat);
   return ctx.createPattern(tc, 'repeat');
 }
-async function renderVector() {
-  const run = ++vrun;
-  const g = geom(), keys = vectorKeys(g);
-  if (!keys) return;
-  const sig = [g.x0, g.y0, g.k, g.mapW, g.mapH, disp, styleSig()].join();
-  await loadCells(keys, () => {});
-  if (run !== vrun) return;
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
-  const can = document.createElement('canvas');
-  can.width = Math.round(g.mapW * disp * dpr); can.height = Math.round(g.mapH * disp * dpr);
+/* Draws the real vector data (all passes of the current style) for the view into a canvas that is
+   `ppp` pixels per output point. Shared by the sharp preview and the PNG export. The cells for `keys`
+   must already be loaded. `cancel()` is polled while yielding; returns false if cancelled. */
+async function paintVector(can, g, keys, ppp, cancel, onPass) {
   const ctx = can.getContext('2d');
-  const sc = disp * dpr * g.k, ws = widthScale(g.k);
+  const sc = ppp * g.k, ws = widthScale(g.k);
   const ox = -g.x0 * sc, oy = (g.y0 + g.vh) * sc;
   ctx.fillStyle = THEMES[state.theme].land; ctx.fillRect(0, 0, can.width, can.height);
   ctx.lineJoin = 'round';
   let t0 = performance.now();
-  for (const p of passes()) {
+  const P = passes();
+  let n = 0;
+  for (const p of P) {
     for (const key of keys) {
       const c = cells.get(key);
       if (!c.paths) buildPaths(c);
@@ -427,14 +589,14 @@ async function renderVector() {
         ctx.fillStyle = p.hex; ctx.fill(path, 'nonzero');
         if (p.outline) { ctx.strokeStyle = p.outline; ctx.lineWidth = .22 * ws; ctx.setLineDash([]); ctx.stroke(path); }
       } else if (p.kind === 'shadow') {
-        const so = shadowOff(g.k) * disp * dpr;
+        const so = shadowOff(g.k) * ppp;
         ctx.setTransform(sc, 0, 0, -sc, ox + so, oy + so);
         ctx.fillStyle = p.hex; ctx.fill(path, 'nonzero');
       } else if (p.kind === 'pattern') {
         ctx.save();
         ctx.clip(path, 'nonzero');
         ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.fillStyle = canvasPattern(ctx, p.pat, p.pat.T * patScale(g) * disp * dpr);
+        ctx.fillStyle = canvasPattern(ctx, p.pat, p.pat.T * patScale(g) * ppp);
         ctx.fillRect(0, 0, can.width, can.height);
         ctx.restore();
       } else {
@@ -443,15 +605,31 @@ async function renderVector() {
         ctx.stroke(path);
       }
     }
-    if (performance.now() - t0 > 30) { await tick(); if (run !== vrun) return; t0 = performance.now(); }
+    n++;
+    if (onPass) onPass(n, P.length);
+    if (performance.now() - t0 > 30) { await tick(); if (cancel()) return false; t0 = performance.now(); }
   }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  return true;
+}
+async function renderVector() {
+  const run = ++vrun;
+  const g = geom(), keys = vectorKeys(g);
+  if (!keys) return;
+  const sig = [g.x0, g.y0, g.k, g.mapW, g.mapH, disp, styleSig()].join();
+  await loadCells(keys, () => {});
+  if (run !== vrun) return;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const can = document.createElement('canvas');
+  can.width = Math.round(g.mapW * disp * dpr); can.height = Math.round(g.mapH * disp * dpr);
+  if (!await paintVector(can, g, keys, disp * dpr, () => run !== vrun)) return;
   vcan = can;
   vinfo = { x0: g.x0, y0: g.y0, vw: g.vw, vh: g.vh, style: styleSig(), sig };
   schedule();
 }
 
 /* draw the map area (no paper margin) at d px per point with its top-left at the origin */
-function paintMap(ctx, g, d) {
+function paintMap(ctx, g, d, lab) {
   const s = M.img / M.size;
   const img = themeImg();
   ctx.imageSmoothingQuality = 'high';
@@ -463,8 +641,9 @@ function paintMap(ctx, g, d) {
   if (vinfo && vinfo.style === styleSig() && vectorKeys(g)) {
     ctx.drawImage(vcan, (vinfo.x0 - g.x0) * g.k * d, (g.y0 + g.vh - vinfo.y0 - vinfo.vh) * g.k * d, vinfo.vw * g.k * d, vinfo.vh * g.k * d);
   }
+  drawTerrain(ctx, g, d);
   ctx.scale(d, d);
-  drawOverlay(ctx, g, state);
+  drawOverlay(ctx, g, state, lab && lab.list.length ? c => drawLabels(c, lab.list, THEMES[state.theme].ov, lab.dx, lab.dy) : null);
   ctx.restore();
 }
 
@@ -484,7 +663,8 @@ function render() {
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cw, ch);
   ctx.save();
   ctx.translate(g.mx * disp, g.my * disp);
-  paintMap(ctx, g, disp);
+  if (state.terrain) hillImg();
+  paintMap(ctx, g, disp, previewLabels(g));
   if (state.grid) {
     ctx.strokeStyle = 'rgba(168,35,44,.45)'; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
     ctx.beginPath();
@@ -501,8 +681,13 @@ function render() {
     ctx.fillStyle = C.ink; ctx.font = '600 15px system-ui, sans-serif'; ctx.textAlign = 'center';
     ctx.fillText('Loading map...', cw / 2, ch / 2);
   }
+  queueLabels(g);
   summary(g);
+  lastDpr = dpr;
+  queueInk();
+  queueHash();
 }
+let lastDpr = 1;
 function schedule() { if (!raf) raf = requestAnimationFrame(render); }
 
 const inches = v => {
@@ -520,6 +705,34 @@ function summary(g) {
   const big = Math.max(g.mapW, g.mapH) > 14400;
   $('dlSheet').disabled = busy || big;
   $('dlSheet').title = big ? 'A single PDF sheet is limited to 200 in (16 ft 8 in).' : '';
+  $('dlPng').disabled = busy;
+  $('dlTest').disabled = busy;
+  const poster = POSTERS.some(p => Math.abs(p[0] - state.wallW) < .01 && Math.abs(p[1] - state.wallH) < .01);
+  $('posterNote').hidden = !poster;
+  $('dlSheet').classList.toggle('hot', poster);
+}
+const POSTERS = [[18, 24], [24, 18], [24, 36], [36, 24]];   // wall width x height in inches
+
+/* ---- ink estimate: average darkness of the map area of the preview, computed once the view settles */
+let inkT = 0, inkCan = null;
+function queueInk() { clearTimeout(inkT); inkT = setTimeout(measureInk, 450); }
+function measureInk() {
+  if (ptrs.size) return queueInk();
+  if (!themeImg().ready) return;
+  const g = geom(), sw = 96, sh = clamp(Math.round(sw * g.mapH / g.mapW), 8, 200);
+  if (!inkCan) inkCan = document.createElement('canvas');
+  inkCan.width = sw; inkCan.height = sh;
+  const c = inkCan.getContext('2d', { willReadFrequently: true });
+  const s = disp * lastDpr;
+  c.fillStyle = '#fff'; c.fillRect(0, 0, sw, sh);
+  c.drawImage(canvas, g.mx * s, g.my * s, g.mapW * s, g.mapH * s, 0, 0, sw, sh);
+  const d = c.getImageData(0, 0, sw, sh).data;
+  let sum = 0;
+  for (let i = 0; i < d.length; i += 4) sum += 1 - (.2126 * d[i] + .7152 * d[i + 1] + .0722 * d[i + 2]) / 255;
+  const pct = 100 * sum / (d.length / 4);
+  const rating = pct < 10 ? 'light' : pct < 25 ? 'moderate' : 'heavy';
+  $('sInk').textContent = `${pct < 1 ? 'under 1' : 'about ' + Math.round(pct)}% (${rating})`;
+  $('sInk').title = 'Rough share of the page covered with color, from the preview. Dark styles use much more ink; Line art uses the least.';
 }
 
 /* ---- interaction */
@@ -533,15 +746,17 @@ function zoomAt(factor, px, py) {
   schedule();
 }
 const ptrs = new Map();
-let pinch = 0;
+let pinch = 0, clickCand = null;
 canvas.addEventListener('pointerdown', e => {
   canvas.setPointerCapture(e.pointerId);
   ptrs.set(e.pointerId, [e.clientX, e.clientY]);
   canvas.classList.add('drag');
   pinch = 0;
+  clickCand = ptrs.size === 1 ? { id: e.pointerId, x: e.clientX, y: e.clientY } : null;
 });
 canvas.addEventListener('pointermove', e => {
   if (!ptrs.has(e.pointerId)) return;
+  if (clickCand && Math.hypot(e.clientX - clickCand.x, e.clientY - clickCand.y) > 5) clickCand = null;
   const prev = ptrs.get(e.pointerId);
   ptrs.set(e.pointerId, [e.clientX, e.clientY]);
   if (ptrs.size === 1) {
@@ -557,7 +772,12 @@ canvas.addEventListener('pointermove', e => {
     pinch = d;
   }
 });
-const up = e => { ptrs.delete(e.pointerId); pinch = 0; if (!ptrs.size) canvas.classList.remove('drag'); };
+const up = e => {
+  const click = e.type === 'pointerup' && clickCand && clickCand.id === e.pointerId && ptrs.size === 1;
+  ptrs.delete(e.pointerId); pinch = 0; clickCand = null;
+  if (!ptrs.size) canvas.classList.remove('drag');
+  if (click && placing) placeMarker(e);
+};
 canvas.addEventListener('pointerup', up);
 canvas.addEventListener('pointercancel', up);
 canvas.addEventListener('wheel', e => {
@@ -576,10 +796,15 @@ $('goDowntown').addEventListener('click', () => { [state.cx, state.cy] = M.cente
 
 function readWall() {
   const num = id => Math.max(0, parseFloat($(id).value) || 0);
-  state.wallW = clamp(num('wFt') * 12 + num('wIn'), 24, 192);
-  state.wallH = clamp(num('hFt') * 12 + num('hIn'), 24, 192);
+  state.wallW = clamp(num('wFt') * 12 + num('wIn'), 12, 192);
+  state.wallH = clamp(num('hFt') * 12 + num('hIn'), 12, 192);
   schedule();
 }
+document.querySelectorAll('[data-poster]').forEach(b => b.addEventListener('click', () => {
+  const [w, h] = b.dataset.poster.split('x').map(Number);
+  state.wallW = w; state.wallH = h;
+  normWall(); schedule();
+}));
 function normWall() {
   for (const [f, i, v] of [['wFt', 'wIn', state.wallW], ['hFt', 'hIn', state.wallH]]) {
     $(f).value = Math.floor(v / 12); $(i).value = Math.round((v % 12) * 100) / 100;
@@ -591,8 +816,9 @@ for (const id of ['wFt', 'wIn', 'hFt', 'hIn']) {
 }
 document.querySelectorAll('input[name=paper]').forEach(r => r.addEventListener('change', () => { state.paper = r.value; schedule(); }));
 $('orient').addEventListener('change', e => { state.orient = e.target.value; schedule(); });
-for (const [id, key] of [['oBorder', 'border'], ['oCompass', 'compass'], ['oRings', 'rings'], ['oGrid', 'grid'],
-  ['oTrees', 'trees'], ['oWaves', 'waves'], ['oShadows', 'shadows']]) {
+const CHECKS = [['oBorder', 'border'], ['oStreets', 'labStreets'], ['oPlaces', 'labPlaces'], ['oTerrain', 'terrain'], ['oCompass', 'compass'], ['oRings', 'rings'], ['oGrid', 'grid'],
+  ['oTrees', 'trees'], ['oWaves', 'waves'], ['oShadows', 'shadows']];
+for (const [id, key] of CHECKS) {
   $(id).addEventListener('change', e => { state[key] = e.target.checked; schedule(); });
 }
 const themeBox = $('themes');
@@ -601,26 +827,112 @@ for (const [key, T] of Object.entries(THEMES)) {
   b.type = 'button'; b.className = 'theme'; b.dataset.theme = key;
   b.setAttribute('aria-pressed', key === state.theme);
   b.innerHTML = `<span class="sw">${T.sw.map(c => `<i style="background:${c}"></i>`).join('')}</span><b>${T.label}</b><small>${T.note}</small>`;
-  b.addEventListener('click', () => {
-    state.theme = key;
-    themeBox.querySelectorAll('.theme').forEach(x => x.setAttribute('aria-pressed', x === b));
-    schedule();
-  });
+  b.addEventListener('click', () => { state.theme = key; syncTheme(); schedule(); });
   themeBox.appendChild(b);
 }
+function syncTheme() { themeBox.querySelectorAll('.theme').forEach(x => x.setAttribute('aria-pressed', x.dataset.theme === state.theme)); }
 const placeSel = $('place');
 PLACES.slice().sort((a, b) => a[0].localeCompare(b[0])).forEach(p => {
   const o = document.createElement('option'); o.value = p[0]; o.textContent = p[0]; placeSel.appendChild(o);
 });
+/* centre the view on a base-coordinate point at roughly neighborhood zoom (about 1.5 miles across) */
+function centerOn(bx, by) {
+  const g = geom();
+  state.cx = bx; state.cy = by;
+  state.zoom = clamp((Math.min(g.mapW, g.mapH) / (1.5 * MILE)) / g.minK, 1, g.maxZoom);
+  schedule();
+}
 placeSel.addEventListener('change', () => {
   const p = PLACES.find(x => x[0] === placeSel.value);
   if (!p) return;
-  const g = geom();
-  [state.cx, state.cy] = PROJ(p[1], p[2]);
-  state.zoom = clamp((Math.min(g.mapW, g.mapH) / (1.5 * MILE)) / g.minK, 1, g.maxZoom);   // about 1.5 miles across
+  centerOn(...PROJ(p[1], p[2]));
   placeSel.value = '';
-  schedule();
 });
+
+/* ---- address search (OpenStreetMap Nominatim; one request per button press) */
+const NOMINATIM = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&countrycodes=us&viewbox=-85.95,38.40,-85.40,37.97&bounded=1&q=';
+const inMap = (bx, by) => bx >= 0 && bx <= M.size && by >= 0 && by <= M.size;
+const addrMsg = t => { $('addrMsg').textContent = t; };
+async function findAddress() {
+  const q = $('addr').value.trim();
+  const list = $('addrRes');
+  list.textContent = '';
+  if (!q) { addrMsg('Type an address or place name first.'); return; }
+  $('addrGo').disabled = true;
+  addrMsg('Searching...');
+  const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 12000);
+  try {
+    const res = await fetch(NOMINATIM + encodeURIComponent(q), { signal: ctl.signal });
+    if (!res.ok) throw new Error('The search service answered with an error (' + res.status + ').');
+    const data = await res.json();
+    const hits = (Array.isArray(data) ? data : []).map(d => ({ lat: parseFloat(d.lat), lon: parseFloat(d.lon), name: String(d.display_name || '') }))
+      .filter(h => Number.isFinite(h.lat) && Number.isFinite(h.lon)).slice(0, 5);
+    if (!hits.length) { addrMsg('No match found around Louisville. Try adding the street number, or a neighborhood name.'); return; }
+    addrMsg('Choose a result:');
+    for (const h of hits) {
+      const li = document.createElement('li'), b = document.createElement('button');
+      b.type = 'button'; b.textContent = h.name || `${h.lat.toFixed(4)}, ${h.lon.toFixed(4)}`;
+      b.addEventListener('click', () => {
+        const [bx, by] = PROJ(h.lat, h.lon);
+        if (!inMap(bx, by)) { addrMsg('That place is outside the area this map covers.'); return; }
+        centerOn(bx, by);
+        addrMsg('Centered the map on your choice.');
+      });
+      li.appendChild(b); list.appendChild(li);
+    }
+  } catch (err) {
+    addrMsg(err.name === 'AbortError' ? 'The search took too long. Check your connection and try again.' :
+      'Could not reach the search service. ' + (err.message && !/fetch/i.test(err.message) ? err.message : 'Check your connection and try again.'));
+  } finally {
+    clearTimeout(to);
+    $('addrGo').disabled = false;
+  }
+}
+$('addrGo').addEventListener('click', findAddress);
+$('addr').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); findAddress(); } });
+
+/* ---- title block inputs */
+const cleanText = (s, n) => String(s || '').replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, n);
+$('tTitle').addEventListener('input', e => { state.title = cleanText(e.target.value, 60); schedule(); });
+$('tSub').addEventListener('input', e => { state.subtitle = cleanText(e.target.value, 80); schedule(); });
+$('tPos').addEventListener('change', e => { state.tpos = e.target.value; schedule(); });
+
+/* ---- personal markers */
+const MARK_NAMES = { heart: 'Heart', star: 'Star', house: 'House', pin: 'Pin' };
+const MAXMARK = 100;
+let placing = null;
+function setPlacing(t) {
+  placing = t;
+  document.querySelectorAll('[data-mark]').forEach(b => b.setAttribute('aria-pressed', b.dataset.mark === t));
+  canvas.classList.toggle('place', !!t);
+  $('mHint').textContent = t ? `Click the map where the ${MARK_NAMES[t].toLowerCase()} should go. Click its button again to cancel.` :
+    'Choose a symbol, then click the map to drop it there. Markers stay on their spot when you move or zoom the map.';
+}
+document.querySelectorAll('[data-mark]').forEach(b => b.addEventListener('click', () => setPlacing(placing === b.dataset.mark ? null : b.dataset.mark)));
+function placeMarker(e) {
+  const g = geom(), r = canvas.getBoundingClientRect();
+  const mx = (e.clientX - r.left) / disp - g.mx, my = (e.clientY - r.top) / disp - g.my;
+  if (mx < 0 || my < 0 || mx > g.mapW || my > g.mapH) return;
+  if (state.markers.length >= MAXMARK) { $('mHint').textContent = `That is the most markers (${MAXMARK}). Remove one to add another.`; setPlacing(null); return; }
+  state.markers.push({ t: placing, x: clamp(g.x0 + mx / g.k, 0, M.size), y: clamp(g.y0 + (g.mapH - my) / g.k, 0, M.size) });
+  setPlacing(null);
+  renderMarkerList();
+  schedule();
+}
+function renderMarkerList() {
+  const ul = $('mList'), cnt = {};
+  ul.textContent = '';
+  state.markers.forEach((m, i) => {
+    cnt[m.t] = (cnt[m.t] || 0) + 1;
+    const li = document.createElement('li'), sp = document.createElement('span'), b = document.createElement('button');
+    sp.textContent = `${MARK_NAMES[m.t]} ${cnt[m.t]}`;
+    b.type = 'button'; b.textContent = 'Remove'; b.setAttribute('aria-label', `Remove ${sp.textContent}`);
+    b.addEventListener('click', () => { state.markers.splice(i, 1); renderMarkerList(); schedule(); });
+    li.append(sp, b); ul.appendChild(li);
+  });
+  $('mClear').hidden = !state.markers.length;
+}
+$('mClear').addEventListener('click', () => { state.markers = []; renderMarkerList(); schedule(); });
 new ResizeObserver(schedule).observe(stage);
 
 /* ------------------------------------------------------------ vector tiles */
@@ -698,6 +1010,397 @@ function collect(bx0, by0, bx1, by1) {
   return buckets;
 }
 
+/* ------------------------------------------------------------ extra layers: neighborhood highlight, names, terrain
+   Everything here is opt-in and off by default. */
+const HOOD_FADE = .6;                          // opacity of the paper-coloured veil outside the highlighted area
+const hoodMap = new Map();
+let hoodPromise = null;
+const hoodByName = n => (n ? hoodMap.get(n) || null : null);
+const layerMsg = t => { $('layerMsg').textContent = t || ''; };
+function loadHoods() {
+  if (!hoodPromise) {
+    hoodPromise = fetch('hoods.json').then(r => { if (!r.ok) throw new Error('Could not load the neighborhood outlines (' + r.status + ')'); return r.json(); })
+      .then(arr => {
+        for (const h of arr) {
+          if (!h || typeof h.name !== 'string' || !Array.isArray(h.rings)) continue;
+          h.bb = h.rings.map(r => {
+            let a = 1e9, b = 1e9, c = -1e9, d = -1e9;
+            for (let i = 0; i < r.length; i += 2) { a = Math.min(a, r[i]); c = Math.max(c, r[i]); b = Math.min(b, r[i + 1]); d = Math.max(d, r[i + 1]); }
+            return [a, b, c, d, r];
+          });
+          hoodMap.set(h.name, h);
+        }
+        if (state.hood && !hoodMap.has(state.hood)) state.hood = '';
+        fillHoodSelect(); syncLayerUI(); schedule();
+      }).catch(err => { hoodPromise = null; layerMsg(err.message); throw err; });
+  }
+  return hoodPromise;
+}
+function fillHoodSelect() {
+  const sel = $('hood');
+  sel.textContent = '';
+  const none = document.createElement('option'); none.value = ''; none.textContent = 'None'; sel.appendChild(none);
+  for (const [label, kind] of [['Neighborhoods', 'neighborhood'], ['Cities and towns', 'city']]) {
+    const grp = document.createElement('optgroup'); grp.label = label;
+    for (const h of hoodMap.values()) if (h.kind === kind) { const o = document.createElement('option'); o.value = h.name; o.textContent = h.name; grp.appendChild(o); }
+    if (grp.children.length) sel.appendChild(grp);
+  }
+  sel.value = state.hood;
+}
+function syncLayerUI() {
+  const sel = $('hood');
+  if (state.hood && ![...sel.options].some(o => o.value === state.hood)) {
+    const o = document.createElement('option'); o.value = state.hood; o.textContent = state.hood; sel.appendChild(o);
+  }
+  sel.value = state.hood;
+  $('hoodFit').disabled = !hoodByName(state.hood);
+  $('oStreets').checked = state.labStreets; $('oPlaces').checked = state.labPlaces; $('oTerrain').checked = state.terrain;
+  $('terrAmt').value = state.terrainAmt; $('terrVal').textContent = state.terrainAmt + '%';
+  $('terrAmt').disabled = !state.terrain;
+}
+['focus', 'pointerdown', 'keydown'].forEach(ev => $('hood').addEventListener(ev, () => { loadHoods().catch(() => {}); }));
+$('hood').addEventListener('change', e => { state.hood = e.target.value; syncLayerUI(); schedule(); });
+/* centre and zoom the view on the highlighted area with a small margin */
+$('hoodFit').addEventListener('click', () => {
+  const h = hoodByName(state.hood);
+  if (!h) return;
+  let a = 1e9, b = 1e9, c = -1e9, d = -1e9;
+  for (const r of h.bb) { a = Math.min(a, r[0]); b = Math.min(b, r[1]); c = Math.max(c, r[2]); d = Math.max(d, r[3]); }
+  const g = geom();
+  const need = Math.min(g.mapW / (Math.max(c - a, 40) * 1.16), g.mapH / (Math.max(d - b, 40) * 1.16));
+  state.zoom = clamp(need / g.minK, 1, g.maxZoom);
+  state.cx = (a + c) / 2; state.cy = (b + d) / 2;
+  schedule();
+});
+for (const id of ['oStreets', 'oPlaces']) $(id).addEventListener('change', () => { layerMsg(''); });
+$('oTerrain').addEventListener('change', syncLayerUI);
+$('terrAmt').addEventListener('input', e => { state.terrainAmt = clamp(Math.round(+e.target.value) || 60, 10, 100); $('terrVal').textContent = state.terrainAmt + '%'; schedule(); });
+
+/* ---- terrain shading: greyscale relief, multiplied over the map */
+let hillIm = null;
+function hillImg() {
+  if (!hillIm) {
+    hillIm = new Image();
+    hillIm.onload = () => { hillIm.ready = true; schedule(); };
+    hillIm.onerror = () => { hillIm.failed = true; layerMsg('Could not load the terrain image.'); };
+    hillIm.src = 'hillshade.jpg';
+  }
+  return hillIm;
+}
+async function hillReady() {
+  const im = hillImg();
+  if (!im.ready && !im.failed) await new Promise(r => { im.addEventListener('load', r); im.addEventListener('error', r); });
+  if (!im.ready) throw new Error('Could not load the terrain image.');
+  return im;
+}
+function drawTerrain(ctx, g, d) {
+  if (!state.terrain) return;
+  const im = hillImg();
+  if (!im.ready) return;
+  const sx = im.naturalWidth / M.size, sy = im.naturalHeight / M.size;
+  ctx.save();
+  ctx.globalCompositeOperation = 'multiply'; ctx.globalAlpha = state.terrainAmt / 100; ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(im, g.x0 * sx, (M.size - g.y0 - g.vh) * sy, g.vw * sx, g.vh * sy, 0, 0, g.mapW * d, g.mapH * d);
+  ctx.restore();
+}
+const jpegComps = b => {
+  for (let i = 2; i + 9 < b.length;) {
+    if (b[i] !== 255) { i++; continue; }
+    const m = b[i + 1];
+    if (m >= 0xC0 && m <= 0xCF && m !== 0xC4 && m !== 0xC8 && m !== 0xCC) return b[i + 9];
+    i += 2 + ((b[i + 2] << 8) | b[i + 3]);
+  }
+  return 3;
+};
+/* JPEG of the part of the relief that covers a base-coordinate window, for one PDF page. Up to 150 pixels per inch of
+   paper but never more than the source has. The crop is aligned to whole source pixels; the returned base rectangle is
+   exactly what the crop covers. */
+async function terrainImage(g, win) {
+  const im = await hillReady();
+  const W = im.naturalWidth, H = im.naturalHeight, sx = W / M.size, sy = H / M.size;
+  const px0 = clamp(Math.floor(win[0] * sx), 0, W - 1), px1 = clamp(Math.ceil(win[2] * sx), px0 + 1, W);
+  const py0 = clamp(Math.floor((M.size - win[3]) * sy), 0, H - 1), py1 = clamp(Math.ceil((M.size - win[1]) * sy), py0 + 1, H);
+  const sw = px1 - px0, sh = py1 - py0;
+  const wantW = (win[2] - win[0]) * g.k / 72 * 150;
+  const dw = clamp(Math.round(wantW), Math.min(4, sw), sw), dh = Math.max(1, Math.min(sh, Math.round(sh * dw / sw)));
+  if (!terrCan) terrCan = document.createElement('canvas');
+  terrCan.width = dw; terrCan.height = dh;
+  const c = terrCan.getContext('2d');
+  c.imageSmoothingQuality = 'high';
+  c.drawImage(im, px0, py0, sw, sh, 0, 0, dw, dh);
+  const blob = await new Promise(r => terrCan.toBlob(r, 'image/jpeg', .8));
+  if (!blob) throw new Error('Your browser could not make the terrain image.');
+  const jpg = new Uint8Array(await blob.arrayBuffer());
+  return { jpg, w: dw, h: dh, comps: jpegComps(jpg), bx0: px0 / sx, bx1: px1 / sx, by0: M.size - py1 / sy, by1: M.size - py0 / sy };
+}
+let terrCan = null;
+
+/* ---- street and place names */
+let labFail = false;
+const labCells = new Map();                    // cell key -> prepared lines
+let placesData = null, placesPromise = null;
+const pool = async (items, fn, n = 6) => {
+  let i = 0;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (i < items.length) await fn(items[i++]); }));
+};
+async function loadLabelCell(key) {
+  if (labCells.has(key)) return;
+  let lines = [];
+  try {
+    let res = null;
+    for (let tryN = 0; tryN < 3 && !(res && res.ok); tryN++) {        // a busy browser sometimes refuses a request: try again
+      if (tryN) await new Promise(r => setTimeout(r, 200 * tryN));
+      res = await fetch(`labels/${key}.bin`).catch(() => null);
+    }
+    if (!res || !res.ok) throw new Error('missing');
+    let buf = new Uint8Array(await res.arrayBuffer());
+    if (buf[0] === 0x1f && buf[1] === 0x8b) {
+      const ds = new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'));
+      buf = new Uint8Array(await new Response(ds).arrayBuffer());
+    }
+    for (const s of JSON.parse(new TextDecoder().decode(buf))) {
+      if (!s || typeof s.n !== 'string' || !Array.isArray(s.p) || s.p.length < 4) continue;
+      let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, len = 0;
+      for (let i = 0; i < s.p.length; i += 2) {
+        const x = s.p[i], y = s.p[i + 1];
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+        if (i) len += Math.hypot(x - s.p[i - 2], y - s.p[i - 1]);
+      }
+      lines.push({ n: s.n, c: s.c | 0, p: s.p, x0, y0, x1, y1, len });
+    }
+  } catch (e) { lines = []; labFail = true; }
+  labCells.set(key, lines);
+}
+const labelKeys = win => {
+  const keys = [], cl = v => clamp(Math.floor(v / 540), 0, 15);
+  for (let cx = cl(win[0] - 8); cx <= cl(win[2] + 8); cx++) for (let cy = cl(win[1] - 8); cy <= cl(win[3] + 8); cy++) keys.push(cx + '_' + cy);
+  return keys;
+};
+async function loadLabelData(want, win, onProgress) {
+  if (want.places && !placesData) {
+    if (!placesPromise) placesPromise = fetch('labels/places.json').then(r => (r.ok ? r.json() : [])).catch(() => []).then(a => { placesData = Array.isArray(a) ? a.filter(q => q && typeof q.n === 'string' && Number.isFinite(q.x) && Number.isFinite(q.y)) : []; });
+    await placesPromise;
+  }
+  if (want.streets) {
+    const todo = labelKeys(win).filter(k => !labCells.has(k));
+    let done = 0;
+    await pool(todo, async k => { await loadLabelCell(k); if (onProgress) onProgress(++done, todo.length); });
+  }
+}
+
+const STREET_SIZE = [10, 9, 7.5, 6.5];         // points, by road class, before scaling
+const STREET_MINK = [0, .2, .7, 2.5];         // smallest view scale (points per base unit) at which a class is named
+const MAX_TURN = 20 * Math.PI / 180;           // most a street may bend across its label
+const MAX_STREET_TRIES = 14000, MAX_LABELS = 4000;
+const wrapPi = a => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
+const widthCache = new Map();
+function measure(font, text) {
+  const key = font + '|' + text;
+  let w = widthCache.get(key);
+  if (w === undefined) { w = textW(font, text); widthCache.set(key, w); }
+  return w;
+}
+const labelScale = g => clamp(.8 + .45 * g.o, .9, 1.35) * clamp(Math.pow(g.k / 4, .12), .85, 1.35);
+
+/* Samples a street (base coordinates) at even spacing `d` in frame points, keeping only the parts inside the rectangle
+   `r`; each unbroken piece becomes one run (flat x,y array). */
+function resample(p, g, d, r, runs) {
+  const { k, mapH } = g;
+  let px = (p[0] - g.x0) * k, py = mapH - (p[1] - g.y0) * k, run = null, carry = 0;
+  for (let i = 2; i < p.length; i += 2) {
+    const cx = (p[i] - g.x0) * k, cy = mapH - (p[i + 1] - g.y0) * k;
+    const dx = cx - px, dy = cy - py, len = Math.hypot(dx, dy);
+    let t0 = 0, t1 = 1, ok = len > 1e-9;
+    if (ok) for (const [pp, qq] of [[-dx, px - r[0]], [dx, r[2] - px], [-dy, py - r[1]], [dy, r[3] - py]]) {
+      if (pp === 0) { if (qq < 0) ok = false; } else { const t = qq / pp; if (pp < 0) { if (t > t1) ok = false; else if (t > t0) t0 = t; } else if (t < t0) ok = false; else if (t < t1) t1 = t; }
+    }
+    if (ok && t1 > t0) {
+      if (t0 > 0 || !run) { run = []; runs.push(run); carry = t0 * len; }
+      let s = carry;
+      for (; s <= t1 * len + 1e-9; s += d) run.push(px + dx * s / len, py + dy * s / len);
+      carry = s - t1 * len;
+      if (t1 < 1) run = null;
+    } else run = null;
+    px = cx; py = cy;
+  }
+}
+
+/* Decides every label for one view: returns [{ text, x, y, angle, size, kind, font, ls, box }] in frame coordinates
+   (points, origin top-left, y down). One function for the preview, the PDFs and the PNG, so they always agree.
+   `want` = { streets, places, border }; `win` = base-coordinate window whose streets are considered (default: the view).
+   The label data for `win` must already be loaded (see loadLabelData). */
+function placeLabels(g, want, win) {
+  const out = [];
+  if (!want.streets && !want.places) return out;
+  const { mapW, mapH, k, o } = g;
+  win = win || [g.x0, g.y0, g.x0 + g.vw, g.y0 + g.vh];
+  const B = want.border ? 108 * o : 0, ax0 = B, ay0 = B, ax1 = mapW - B, ay1 = mapH - B;
+  const sc = labelScale(g), GS = 48, grid = new Map(), gk = (i, j) => i * 16384 + j;
+  const inside = b => b[0] >= ax0 && b[1] >= ay0 && b[2] <= ax1 && b[3] <= ay1;
+  const free = b => {
+    for (let i = Math.floor(b[0] / GS); i <= Math.floor(b[2] / GS); i++) for (let j = Math.floor(b[1] / GS); j <= Math.floor(b[3] / GS); j++) {
+      const c = grid.get(gk(i, j));
+      if (c) for (const q of c) if (b[0] < q[2] && b[2] > q[0] && b[1] < q[3] && b[3] > q[1]) return false;
+    }
+    return true;
+  };
+  const claim = b => {
+    for (let i = Math.floor(b[0] / GS); i <= Math.floor(b[2] / GS); i++) for (let j = Math.floor(b[1] / GS); j <= Math.floor(b[3] / GS); j++) {
+      const key = gk(i, j);
+      if (grid.has(key)) grid.get(key).push(b); else grid.set(key, [b]);
+    }
+  };
+
+  if (want.places && placesData) {
+    for (const r of [0, 1]) for (const q of placesData) {
+      if ((q.r ? 1 : 0) !== r) continue;
+      if (q.x < win[0] - 700 || q.x > win[2] + 700 || q.y < win[1] - 700 || q.y > win[3] + 700) continue;
+      const size = (r ? 10.5 : 15.5) * sc;
+      if (size < 5.5) continue;
+      const text = winAnsi(q.n).toUpperCase();
+      const font = `${r ? 'italic' : 'bold'} ${f5(size)}px ${SERIF}`, ls = size * (r ? .12 : .18);
+      const w = measure(font, text) + ls * text.length;
+      const x = (q.x - g.x0) * k, y = mapH - (q.y - g.y0) * k;
+      const box = [x - w / 2 - 2, y - size * .6 - 2, x + w / 2 + 2, y + size * .6 + 2];
+      if (!inside(box) || !free(box)) continue;
+      claim(box);
+      out.push({ text, x, y, angle: 0, size, kind: r ? 'hood' : 'city', font, ls, box });
+    }
+  }
+
+  if (want.streets) {
+    const on = [0, 1, 2, 3].filter(c => k >= STREET_MINK[c] && STREET_SIZE[c] * sc >= 5);
+    const cand = [[], [], [], []];
+    let seq = 0;
+    for (const key of labelKeys(win)) {
+      const lines = labCells.get(key);
+      if (!lines) continue;
+      for (const ln of lines) {
+        if (!on.includes(ln.c) || ln.c > 3 || ln.c < 0) continue;
+        if (ln.x1 < win[0] - 8 || ln.x0 > win[2] + 8 || ln.y1 < win[1] - 8 || ln.y0 > win[3] + 8) continue;
+        cand[ln.c].push([ln.len * k, seq++, ln]);
+      }
+    }
+    const reps = new Map();
+    let tries = 0;
+    outer: for (const c of on) {
+      cand[c].sort((a, b) => b[0] - a[0] || a[1] - b[1]);
+      const size = STREET_SIZE[c] * sc, font = `${c === 0 ? 'bold ' : ''}${f5(size)}px ${SANS}`;
+      const d = Math.max(size * .7, 3.5), rect = [ax0 - size, ay0 - size, ax1 + size, ay1 + size];
+      for (const [flen, , ln] of cand[c]) {
+        if (flen < size * 3) break;                      // sorted: everything after is shorter still
+        if (++tries > MAX_STREET_TRIES || out.length >= MAX_LABELS) break outer;
+        const text = winAnsi(ln.n).trim();
+        if (!text) continue;
+        const w = measure(font, text), need = w + size * .7;
+        if (flen < need) continue;
+        const rep = Math.max(216, w * 3);
+        const runs = [];
+        resample(ln.p, g, d, rect, runs);
+        const m = Math.ceil(need / d) + 1, stp = Math.max(1, Math.floor(m / 4)), t = Math.max(1, Math.floor((m - 1) / 3));
+        for (const q of runs) {
+          const n = q.length / 2;
+          if (n < m) continue;
+          const hd = (a, b) => Math.atan2(q[2 * b + 1] - q[2 * a + 1], q[2 * b] - q[2 * a]);
+          const cs = [];
+          for (let j = 0; j + m <= n; j += stp) {
+            const h1 = hd(j, j + t), h2 = hd(j + t, j + m - 1 - t), h3 = hd(j + m - 1 - t, j + m - 1);
+            const spread = Math.max(Math.abs(wrapPi(h1 - h2)), Math.abs(wrapPi(h2 - h3)), Math.abs(wrapPi(h1 - h3)));
+            if (spread > MAX_TURN) continue;
+            cs.push([spread / MAX_TURN + .25 * Math.abs(2 * (j + (m - 1) / 2) / (n - 1) - 1), j]);
+          }
+          cs.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+          const maxPer = clamp(Math.floor((n - 1) * d / rep), 1, 5);
+          let placed = 0;
+          for (let ci = 0; ci < cs.length && ci < 14 && placed < maxPer; ci++) {
+            const j = cs[ci][1], mid = j + (m - 1) / 2, i0 = Math.floor(mid), i1 = Math.ceil(mid);
+            const x = (q[2 * i0] + q[2 * i1]) / 2, y = (q[2 * i0 + 1] + q[2 * i1 + 1]) / 2;
+            let ang = hd(j, j + m - 1);
+            if (ang > Math.PI / 2) ang -= Math.PI; else if (ang <= -Math.PI / 2) ang += Math.PI;
+            const cc = Math.abs(Math.cos(ang)), ss = Math.abs(Math.sin(ang)), ew = w / 2 + 1.5, eh = size * .55 + 1.5;
+            const hx = cc * ew + ss * eh, hy = ss * ew + cc * eh, box = [x - hx, y - hy, x + hx, y + hy];
+            if (!inside(box) || !free(box)) continue;
+            const rp = reps.get(text) || [];
+            if (rp.some(([rx, ry]) => Math.hypot(rx - x, ry - y) < rep)) continue;
+            rp.push([x, y]); reps.set(text, rp);
+            claim(box);
+            out.push({ text, x, y, angle: ang, size, kind: 'street', cls: c, font, ls: 0, box });
+            placed++;
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+const wantLabels = () => ({ streets: state.labStreets, places: state.labPlaces, border: state.border });
+async function computeLabels(g, win, onProgress) {
+  const want = wantLabels();
+  if (!want.streets && !want.places) return [];
+  win = win || [g.x0, g.y0, g.x0 + g.vw, g.y0 + g.vh];
+  await loadLabelData(want, win, onProgress);
+  return placeLabels(g, want, win);
+}
+
+/* Draws placed labels: theme ink with a paper-coloured halo. Used by the preview, the PNG and (per page) the PDF. */
+function drawLabels(ctx, list, pal, dx, dy) {
+  if (!list.length) return;
+  ctx.save();
+  ctx.lineJoin = 'round'; ctx.textAlign = 'center';
+  for (const L of list) {
+    ctx.save();
+    ctx.translate(L.x + (dx || 0), L.y + (dy || 0));
+    if (L.angle) ctx.rotate(L.angle);
+    ctx.font = L.font; ctx.letterSpacing = L.ls ? f5(L.ls) + 'px' : '0px';
+    const by = L.size * .34;
+    ctx.lineWidth = L.size * .3; ctx.strokeStyle = pal.paper; ctx.strokeText(L.text, 0, by);
+    ctx.fillStyle = pal.ink; ctx.fillText(L.text, 0, by);
+    ctx.restore();
+  }
+  ctx.restore();
+}
+/* PDF operators for the labels that touch one page's clip box (bleed included), so a label on a seam is on both pages */
+function labelOps(g, list, t, ox, oy, pal, alphas) {
+  const fx0 = t.cx0 - ox, fx1 = t.cx1 - ox, fy0 = oy + g.mapH - t.cy1, fy1 = oy + g.mapH - t.cy0;
+  const sel = list.filter(L => L.box[2] >= fx0 && L.box[0] <= fx1 && L.box[3] >= fy0 && L.box[1] <= fy1);
+  if (!sel.length) return '';
+  const pc = new PdfCtx(alphas);
+  drawLabels(pc, sel, pal);
+  return pc.o.join('\n') + '\n';
+}
+
+/* preview: placements are recomputed once the view settles; meanwhile the previous set is drawn shifted (pan) or hidden */
+const labelState = { key: '', list: null, g: null };
+let labelTimer = 0, labelRun = 0;
+const labelKey = g => [g.x0, g.y0, g.k, g.mapW, g.mapH, g.o, state.border, state.labStreets, state.labPlaces].join();
+function previewLabels(g) {
+  if ((!state.labStreets && !state.labPlaces) || !labelState.list) return null;
+  if (labelState.key === labelKey(g)) return { list: labelState.list, dx: 0, dy: 0 };
+  const p = labelState.g;
+  if (p.k === g.k && p.mapW === g.mapW && p.mapH === g.mapH && p.o === g.o && labelState.flags === [state.border, state.labStreets, state.labPlaces].join())
+    return { list: labelState.list, dx: (p.x0 - g.x0) * g.k, dy: (g.y0 - p.y0) * g.k };
+  return null;
+}
+function queueLabels(g) {
+  if (!state.labStreets && !state.labPlaces) return;
+  if (labelState.key === labelKey(g)) return;
+  clearTimeout(labelTimer);
+  labelTimer = setTimeout(runLabels, 220);
+}
+async function runLabels() {
+  if (ptrs.size) return queueLabels(geom());
+  const run = ++labelRun, g = geom(), key = labelKey(g);
+  if (labelState.key === key || (!state.labStreets && !state.labPlaces)) return;
+  layerMsg('Placing names...');
+  try {
+    const list = await computeLabels(g);
+    if (run !== labelRun) return;
+    labelState.key = key; labelState.list = list; labelState.g = g; labelState.flags = [state.border, state.labStreets, state.labPlaces].join();
+    layerMsg(labFail ? 'Some street names could not be loaded. Reload the page to try again.' : '');
+    schedule();
+  } catch (err) { if (run === labelRun) layerMsg('Could not place names: ' + err.message); }
+}
+
 /* ------------------------------------------------------------ PDF */
 const enc = new TextEncoder();
 const f2 = n => String(+n.toFixed(2));
@@ -708,10 +1411,34 @@ class PdfCtx {
   constructor(alphas) {
     this.o = []; this.p = []; this.st = []; this.alphas = alphas;
     this.fillStyle = '#000000'; this.strokeStyle = '#000000'; this.lineWidth = 1;
-    this.dash = []; this.globalAlpha = 1; this.lineCap = 'butt';
+    this.dash = []; this.globalAlpha = 1; this.lineCap = 'butt'; this.lineJoin = 'miter';
+    this.font = '10px Arial'; this.textAlign = 'left'; this.letterSpacing = '0px';
   }
-  save() { this.o.push('q'); this.st.push([this.fillStyle, this.strokeStyle, this.lineWidth, this.dash, this.globalAlpha, this.lineCap]); }
-  restore() { this.o.push('Q'); [this.fillStyle, this.strokeStyle, this.lineWidth, this.dash, this.globalAlpha, this.lineCap] = this.st.pop(); }
+  save() { this.o.push('q'); this.st.push([this.fillStyle, this.strokeStyle, this.lineWidth, this.dash, this.globalAlpha, this.lineCap, this.lineJoin, this.font, this.textAlign, this.letterSpacing]); }
+  restore() { this.o.push('Q'); [this.fillStyle, this.strokeStyle, this.lineWidth, this.dash, this.globalAlpha, this.lineCap, this.lineJoin, this.font, this.textAlign, this.letterSpacing] = this.st.pop(); }
+  /* Text: ctx.font is a CSS-like string with a px size, e.g. `bold 12px "Times New Roman", serif` (serif -> Times,
+     anything else -> Helvetica; bold and italic are honoured). Only textBaseline 'alphabetic' is supported.
+     (x, y) is in the current user space, which may be y-down: the text matrix un-flips it so it never prints mirrored. */
+  measureText(s) { return { width: textW(this.font, winAnsi(s)) }; }
+  /* letterSpacing is a CSS length in px (points here); returns the extra advance for a string and the Tc operator text */
+  tracking(t) { const ls = parseFloat(this.letterSpacing) || 0; return { ls, w: ls * [...t].length }; }
+  textPos(t, x) {
+    const tr = this.tracking(t), full = textW(this.font, t) + tr.w;
+    return { tr, x: x - (this.textAlign === 'center' ? full / 2 : this.textAlign === 'right' || this.textAlign === 'end' ? full : 0) };
+  }
+  fillText(s, x, y) {
+    const t = winAnsi(s);
+    if (!t) return;
+    const f = pdfFont(this.font), tp = this.textPos(t, x);
+    this.o.push(`${hexrgb(this.fillStyle)} rg ${this.gs()} BT /${f.key} ${f5(f.size)} Tf ${tp.tr.ls ? f5(tp.tr.ls) + ' Tc ' : ''}1 0 0 -1 ${f5(tp.x)} ${f5(y)} Tm (${pdfStr(t)}) Tj${tp.tr.ls ? ' 0 Tc' : ''} ET`);
+  }
+  /* outlined text (text render mode 1) in the stroke colour: used for the halo behind labels */
+  strokeText(s, x, y) {
+    const t = winAnsi(s);
+    if (!t) return;
+    const f = pdfFont(this.font), tp = this.textPos(t, x);
+    this.o.push(`${hexrgb(this.strokeStyle)} RG ${this.gs()} ${f5(this.lineWidth)} w ${this.lineJoin === 'round' ? 1 : 0} j 0 J [] 0 d BT /${f.key} ${f5(f.size)} Tf ${tp.tr.ls ? f5(tp.tr.ls) + ' Tc ' : ''}1 Tr 1 0 0 -1 ${f5(tp.x)} ${f5(y)} Tm (${pdfStr(t)}) Tj 0 Tr${tp.tr.ls ? ' 0 Tc' : ''} ET`);
+  }
   translate(x, y) { this.o.push(`1 0 0 1 ${f5(x)} ${f5(y)} cm`); }
   rotate(a) { const c = Math.cos(a), s = Math.sin(a); this.o.push(`${f5(c)} ${f5(s)} ${f5(-s)} ${f5(c)} 0 0 cm`); }
   scale(x, y) { this.o.push(`${f5(x)} 0 0 ${f5(y)} 0 0 cm`); }
@@ -731,9 +1458,9 @@ class PdfCtx {
   }
   setLineDash(d) { this.dash = d; }
   gs() { const a = Math.round(this.globalAlpha * 100); this.alphas.add(a); return `/A${a} gs`; }
-  fill() { this.o.push(`${hexrgb(this.fillStyle)} rg ${this.gs()} ${this.p.join(' ')} f`); }
+  fill(rule) { this.o.push(`${hexrgb(this.fillStyle)} rg ${this.gs()} ${this.p.join(' ')} ${rule === 'evenodd' ? 'f*' : 'f'}`); }
   stroke() {
-    this.o.push(`${hexrgb(this.strokeStyle)} RG ${this.gs()} ${f5(this.lineWidth)} w ${this.lineCap === 'round' ? 1 : 0} J 0 j ` +
+    this.o.push(`${hexrgb(this.strokeStyle)} RG ${this.gs()} ${f5(this.lineWidth)} w ${this.lineCap === 'round' ? 1 : 0} J ${this.lineJoin === 'round' ? 1 : this.lineJoin === 'bevel' ? 2 : 0} j ` +
       `[${this.dash.map(f5).join(' ')}] 0 d ${this.p.join(' ')} S`);
   }
   clip() { this.o.push(this.p.join(' ') + ' W n'); }
@@ -815,22 +1542,130 @@ function progress(frac, text) {
 }
 const tick = () => new Promise(r => setTimeout(r, 0));
 
+/* everything drawOverlay needs from the user's choices (the preview passes `state`, which has the same fields) */
+const overlayOpt = () => ({ border: state.border, compass: state.compass, rings: state.rings, theme: state.theme,
+  title: state.title, subtitle: state.subtitle, tpos: state.tpos, markers: state.markers, hood: state.hood });
+
+/* Where tile (row r from the top, column c from the left) sits on its page, in PDF points (y up).
+   Outside edges sit 0.5 in from the paper edge and are never trimmed: column 1 hugs the left, every other column
+   the right; row A hugs the top, every other row the bottom. A single column or row is centred on the sheet. */
+function tileBox(g, r, c) {
+  const { pw, ph, cols, rows } = g;
+  const rb = rows - 1 - r;
+  const lB = c > 0 ? BLEED : 0, rB = c < cols - 1 ? BLEED : 0, bB = rb > 0 ? BLEED : 0, tB = rb < rows - 1 ? BLEED : 0;
+  const px = cols === 1 ? (pw - g.advX) / 2 : c === 0 ? EDGE : pw - EDGE - g.advX;
+  const py = rows === 1 ? (ph - g.advY) / 2 : r === 0 ? ph - EDGE - g.advY : EDGE;
+  return { r, c, rb, px, py, cx0: px - lB, cx1: px + g.advX + rB, cy0: py - bB, cy1: py + g.advY + tB };
+}
+/* the base-coordinate window a tile needs (with bleed), for loading and collecting features */
+const tileWindow = (g, t) => [g.x0 + (t.c * g.advX - (t.px - t.cx0)) / g.k, g.y0 + (t.rb * g.advY - (t.py - t.cy0)) / g.k,
+  g.x0 + ((t.c + 1) * g.advX + (t.cx1 - t.px - g.advX)) / g.k, g.y0 + ((t.rb + 1) * g.advY + (t.cy1 - t.py - g.advY)) / g.k];
+
+/* the terrain image drawn in base coordinates (the current matrix is the map layers' matrix), multiplied over the map */
+const terrainOp = t => `q /TS gs ${f5(t.bx1 - t.bx0)} 0 0 ${f5(t.by1 - t.by0)} ${f5(t.bx0)} ${f5(t.by0)} cm /Tr1 Do Q\n`;
+
+/* content stream parts for one printed map page: map layers, overlay, trim marks and the page name */
+function tileParts(g, P, land, ov, t, terr) {
+  const { cols, rows } = g;
+  const { r, c, rb, px, py, cx0, cx1, cy0, cy1 } = t;
+  const clip = `${f2(cx0)} ${f2(cy0)} ${f2(cx1 - cx0)} ${f2(cy1 - cy0)} re W n\n`;
+  const [bx0, by0, bx1, by1] = tileWindow(g, t);
+  const ox = px - c * g.advX, oy = py - rb * g.advY;
+  const parts = ['q\n', clip, `${hexrgb(land)} rg ${f2(cx0)} ${f2(cy0)} ${f2(cx1 - cx0)} ${f2(cy1 - cy0)} re f\n`];
+  layerParts(parts, g, collect(bx0 - 6, by0 - 6, bx1 + 6, by1 + 6), ox - g.x0 * g.k, oy - g.y0 * g.k, P);
+  if (terr) parts.push(terrainOp(terr));
+  parts.push('Q\nq\n', clip, `1 0 0 -1 ${f2(ox)} ${f2(oy + g.mapH)} cm\n`, ov.under, ov.list ? labelOps(g, ov.list, t, ox, oy, ov.pal, ov.alphas) : '', ov.over, 'Q\n');
+  // trim marks (interior seams only) just outside the printed map
+  let mk = '0.33 0.33 0.33 RG 0.4 w /A100 gs [] 0 d\n';
+  const TK = 18;
+  for (const [x, inner] of [[px, c > 0], [px + g.advX, c < cols - 1]]) {
+    if (!inner) continue;
+    mk += `${f2(x)} ${f2(cy0 - 2 - TK)} m ${f2(x)} ${f2(cy0 - 2)} l S ${f2(x)} ${f2(cy1 + 2)} m ${f2(x)} ${f2(cy1 + 2 + TK)} l S\n`;
+  }
+  for (const [yy, inner] of [[py, rb > 0], [py + g.advY, rb < rows - 1]]) {
+    if (!inner) continue;
+    mk += `${f2(cx0 - 2 - TK)} ${f2(yy)} m ${f2(cx0 - 2)} ${f2(yy)} l S ${f2(cx1 + 2)} ${f2(yy)} m ${f2(cx1 + 2 + TK)} ${f2(yy)} l S\n`;
+  }
+  // page name goes where it will be cut off (above the top trim) or covered (below row A)
+  const lab = rowName(r) + (c + 1);
+  const ly = r === 0 ? cy0 - 9 : cy1 + 4;
+  mk += `0.33 0.33 0.33 rg BT /F1 5.5 Tf ${f2(px + 26)} ${f2(ly)} Td (${lab}   row ${rowName(r)} of ${rowName(rows - 1)}, column ${c + 1} of ${cols}) Tj ET\n`;
+  parts.push(mk);
+  return { parts, ox, oy };
+}
+
+/* Check rulers (10 cm and 1 in) in the page margin of a test tile, plus a one-line instruction.
+   The ruler goes in whichever of the top/bottom margins has more room and sits between the seam ticks. */
+function rulerOps(g, t) {
+  const { pw, ph, cols } = g;
+  const labelTop = t.r !== 0;                                  // where the page name is printed (see tileParts)
+  const roomTop = ph - t.cy1 - 12 - 2 - (labelTop ? 12 : 0), roomBot = t.cy0 - 12 - 2 - (labelTop ? 0 : 12);
+  const top = roomTop >= roomBot;
+  const room = Math.max(roomTop, roomBot);
+  const f = clamp(room / 22, .55, 1);                          // scale down the ruler in a tight margin
+  const lo = cols > 1 && t.c > 0 ? t.px + 8 : 8, hi = cols > 1 && t.c < cols - 1 ? t.px + g.advX - 8 : pw - 8;
+  const CM = 28.3465, IN = 72, len = 100 * CM / 10;            // 10 cm
+  const x0 = lo + Math.max(0, (hi - lo - len) / 2);
+  // band for the ruler (y up): measured away from the page edge by 12 pt (printers do not print right to the edge)
+  const yMid = top ? ph - 12 - 11 * f - 1 : 12 + 11 * f + 1;
+  const fs = 4.6 * f, tk = 4 * f;
+  let s = `q 0 0 0 rg 0 0 0 RG /A100 gs [] 0 d 0.35 w\n`;
+  const ln = (x1, y1, x2, y2, w) => { s += `${w ? w + ' w ' : ''}${f2(x1)} ${f2(y1)} m ${f2(x2)} ${f2(y2)} l S\n`; };
+  const tx = (str, x, y, size, bold) => { s += `BT /${bold ? 'F2' : 'F1'} ${f2(size)} Tf ${f2(x)} ${f2(y)} Td (${pdfStr(str)}) Tj ET\n`; };
+  // centimetre scale: ticks point up from a line just above the middle
+  const yc = yMid + 1;
+  ln(x0, yc, x0 + len, yc, .5);
+  for (let mm = 0; mm <= 100; mm++) {
+    const x = x0 + mm * CM / 10, cm = mm % 10 === 0, half = mm % 5 === 0;
+    ln(x, yc, x, yc + (cm ? tk : half ? tk * .75 : tk * .5), cm ? .5 : .3);
+    if (cm) tx(String(mm / 10), x - (mm >= 100 ? 2.4 : 1.2) * f, yc + tk + 1.1, fs, false);
+  }
+  tx('cm', x0 + len + 4, yc + 1, fs * 1.2, true);
+  // inch scale: ticks point down from a line just below the middle
+  const yi = yMid - 1;
+  ln(x0, yi, x0 + IN, yi, .5);
+  for (let e = 0; e <= 8; e++) {
+    const x = x0 + e * IN / 8, whole = e % 8 === 0, half = e === 4, q = e % 2 === 0;
+    ln(x, yi, x, yi - (whole ? tk : half ? tk * .85 : q ? tk * .65 : tk * .45), whole ? .5 : .3);
+  }
+  tx('0', x0 - 1.2 * f, yi - tk - fs - .8, fs, false);
+  tx('1 in', x0 + IN - 3 * f, yi - tk - fs - .8, fs, false);
+  // instruction line on the opposite margin
+  const msg = 'Test page: 10 cm should measure 100 mm and 1 in 25.4 mm. If not, print at Actual size / 100%.';
+  const ty = top ? 12 + 2 : ph - 12 - 7;
+  const mw = Math.min(hi - lo, textW('6.4px Arial', msg));
+  tx(msg, lo + Math.max(0, (hi - lo - mw) / 2), ty, 6.4, false);
+  return s + 'Q\n';
+}
+
 async function buildPdf(mode) {
   const g = geom();
-  const opt = { border: state.border, compass: state.compass, rings: state.rings, theme: state.theme };
+  if (state.hood && !hoodByName(state.hood)) await loadHoods();
+  const opt = overlayOpt();
   const P = passes(), land = THEMES[state.theme].land;
   const pats = P.filter(p => p.kind === 'pattern').map(p => p.pat);
-  await loadCells(cellKeys(g.x0 - 20, g.y0 - 20, g.x0 + g.vw + 20, g.y0 + g.vh + 20),
-    (d, n) => progress(.35 * d / n, `Loading map detail ${d} of ${n}`));
+  // the test page needs only the tile that holds the centre of the view
+  const testTile = mode === 'test' ? tileBox(g, clamp(Math.floor(g.rows / 2), 0, g.rows - 1), clamp(Math.floor(g.cols / 2), 0, g.cols - 1)) : null;
+  const win = testTile ? tileWindow(g, testTile).map((v, i) => v + (i < 2 ? -20 : 20)) : [g.x0 - 20, g.y0 - 20, g.x0 + g.vw + 20, g.y0 + g.vh + 20];
+  await loadCells(cellKeys(...win), (d, n) => progress(.35 * d / n, `Loading map detail ${d} of ${n}`));
+  let placed = null;
+  if (state.labStreets || state.labPlaces) {
+    placed = await computeLabels(g, win.map((v, i) => v + (i < 2 ? 20 : -20)), (d, n) => progress(.35 + .03 * d / n, `Loading street names ${d} of ${n}`));
+    progress(.38, `Placed ${placed.length} names`);
+  }
+  if (state.terrain) await hillReady();
 
   const doc = new PdfDoc();
   const alphas = new Set([100]);
   const oc = new PdfCtx(alphas);
-  drawOverlay(oc, g, opt);
-  const overlayOps = oc.o.join('\n') + '\n';
+  let split = 0;
+  drawOverlay(oc, g, opt, c => { split = c.o.length; });
+  // the overlay is split where the names go: highlight and rings under them, markers, compass, border and title over them
+  const ov = { under: oc.o.slice(0, split).join('\n') + (split ? '\n' : ''), over: oc.o.length > split ? oc.o.slice(split).join('\n') + '\n' : '',
+    list: placed && placed.length ? placed : null, pal: THEMES[state.theme].ov, alphas };
 
   const idCat = doc.alloc(), idPages = doc.alloc(), idF1 = doc.alloc(), idF2 = doc.alloc(),
-    idGS = doc.alloc(), idImg = doc.alloc();
+    idGS = doc.alloc(), idImg = doc.alloc(), idF3 = doc.alloc(), idF4 = doc.alloc(), idF5 = doc.alloc();
   const kids = [];
   let hasImg = false;
   /* tiling patterns are anchored to the map, so each page gets its own copies shifted to line up across seams */
@@ -839,8 +1674,14 @@ async function buildPdf(mode) {
     drawPatternTile(pc, pat);
     return enc.encode(`1 0 0 -1 0 ${pat.T} cm\n` + pc.o.join('\n') + '\n');
   });
-  const addPage = async (w, h, parts, ox, oy) => {
+  const addPage = async (w, h, parts, ox, oy, terr) => {
     const data = await deflate(parts);
+    let tr = '';
+    if (terr) {
+      const id = doc.alloc();
+      doc.obj(id, `/Type /XObject /Subtype /Image /Width ${terr.w} /Height ${terr.h} /ColorSpace /${terr.comps === 1 ? 'DeviceGray' : 'DeviceRGB'} /BitsPerComponent 8 /Filter /DCTDecode /Interpolate true`, terr.jpg);
+      tr = ` /Tr1 ${id} 0 R`;
+    }
     let pr = '';
     if (pats.length && ox !== undefined) {
       const ps = patScale(g);
@@ -851,22 +1692,33 @@ async function buildPdf(mode) {
         return `/${pat.id} ${id} 0 R`;
       }).join(' ') + ' >>';
     }
-    const res = `<< /Font << /F1 ${idF1} 0 R /F2 ${idF2} 0 R >> /ExtGState ${idGS} 0 R` +
-      (hasImg ? ` /XObject << /Im1 ${idImg} 0 R >>` : '') + pr + ' >>';
+    const res = `<< /Font << /F1 ${idF1} 0 R /F2 ${idF2} 0 R /F3 ${idF3} 0 R /F4 ${idF4} 0 R /F5 ${idF5} 0 R >> /ExtGState ${idGS} 0 R` +
+      (hasImg || tr ? ` /XObject << ${hasImg ? `/Im1 ${idImg} 0 R` : ''}${tr} >>` : '') + pr + ' >>';
     const c = doc.alloc(), p = doc.alloc();
     doc.obj(c, '/Filter /FlateDecode', data);
     doc.obj(p, `<< /Type /Page /Parent ${idPages} 0 R /MediaBox [0 0 ${f2(w)} ${f2(h)}] /Resources ${res} /Contents ${c} 0 R >>`);
     kids.push(p);
   };
 
-  if (mode === 'sheet') {
+  if (mode === 'test') {
+    progress(.5, 'Drawing the test page');
+    await tick();
+    const terr = state.terrain ? await terrainImage(g, tileWindow(g, testTile)) : null;
+    const { parts, ox, oy } = tileParts(g, P, land, ov, testTile, terr);
+    parts.push(rulerOps(g, testTile));
+    await addPage(g.pw, g.ph, parts, ox, oy, terr);
+  } else if (mode === 'sheet') {
     progress(.4, 'Drawing the sheet');
     await tick();
     const parts = [`q ${hexrgb(land)} rg 0 0 ${f2(g.mapW)} ${f2(g.mapH)} re f\n`];
     layerParts(parts, g, collect(g.x0 - 8, g.y0 - 8, g.x0 + g.vw + 8, g.y0 + g.vh + 8), -g.x0 * g.k, -g.y0 * g.k, P);
-    parts.push(`Q\nq 1 0 0 -1 0 ${f2(g.mapH)} cm\n`, overlayOps, 'Q\n');
+    const terr = state.terrain ? await terrainImage(g, [g.x0, g.y0, g.x0 + g.vw, g.y0 + g.vh]) : null;
+    if (terr) parts.push(terrainOp(terr));
+    let labs = '';
+    if (ov.list) { const pc = new PdfCtx(alphas); drawLabels(pc, ov.list, ov.pal); labs = pc.o.join('\n') + '\n'; }
+    parts.push(`Q\nq 1 0 0 -1 0 ${f2(g.mapH)} cm\n`, ov.under, labs, ov.over, 'Q\n');
     progress(.7, 'Compressing');
-    await addPage(g.mapW, g.mapH, parts, 0, 0);
+    await addPage(g.mapW, g.mapH, parts, 0, 0, terr);
   } else {
     /* ---- assembly guide */
     const im = themeImg();
@@ -877,7 +1729,7 @@ async function buildPdf(mode) {
     tc.width = Math.round(g.mapW * td); tc.height = Math.round(g.mapH * td);
     const tctx = tc.getContext('2d');
     tctx.fillStyle = '#fff'; tctx.fillRect(0, 0, tc.width, tc.height);
-    paintMap(tctx, g, td);
+    paintMap(tctx, g, td, placed && placed.length ? { list: placed, dx: 0, dy: 0 } : null);
     const jpg = new Uint8Array(await (await new Promise(r => tc.toBlob(r, 'image/jpeg', .85))).arrayBuffer());
     doc.obj(idImg, `/Type /XObject /Subtype /Image /Width ${tc.width} /Height ${tc.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode`, jpg);
     hasImg = true;
@@ -909,7 +1761,10 @@ async function buildPdf(mode) {
       if (ln) gp.push(`BT /F1 ${fs} Tf 54 ${y} Td (${esc(ln)}) Tj ET\n`);
       y -= 13.6;
     }
-    const boxW = pw - 108, boxH = y - 44;
+    const credits = [];
+    if (state.hood) credits.push('Neighborhood boundaries: LOJIC / Louisville Metro open data');
+    if (state.terrain) credits.push('Elevation: Mapzen / AWS Terrain Tiles (USGS 3DEP and other sources)');
+    const boxW = pw - 108, boxH = y - 44 - 9 * credits.length;
     const sc = Math.min(boxW / g.mapW, boxH / g.mapH);
     const gw = g.mapW * sc, gh = g.mapH * sc, gx = (pw - gw) / 2, gy = y - gh;
     gp.push(`q ${f2(gw)} 0 0 ${f2(gh)} ${f2(gx)} ${f2(gy)} cm /Im1 Do Q\n`);
@@ -926,44 +1781,18 @@ async function buildPdf(mode) {
       gp.push(`/A80 gs 1 1 1 rg ${f2(tx - 1)} ${f2(ty - 1)} ${f2(w + 2)} ${f2(sz + 1.2)} re f /A100 gs ${ink} rg ` +
         `BT /F2 ${f2(sz)} Tf ${f2(tx)} ${f2(ty)} Td (${lab}) Tj ET\n`);
     }
-    gp.push(`0.35 0.35 0.35 rg BT /F1 7 Tf 54 26 Td (${esc('Map data (c) OpenStreetMap contributors, openstreetmap.org/copyright')}) Tj ET\n`);
+    credits.push('Map data (c) OpenStreetMap contributors, openstreetmap.org/copyright');
+    credits.reverse().forEach((t, i) => gp.push(`0.35 0.35 0.35 rg BT /F1 7 Tf 54 ${26 + 9 * i} Td (${esc(t)}) Tj ET\n`));
     await addPage(pw, ph, gp);
 
     /* ---- map pages, top row first */
     let n = 0;
     for (let r = 0; r < rows; r++) {
-      const rb = rows - 1 - r;
       for (let c = 0; c < cols; c++) {
-        const lB = c > 0 ? BLEED : 0, rB = c < cols - 1 ? BLEED : 0, bB = rb > 0 ? BLEED : 0, tB = rb < rows - 1 ? BLEED : 0;
-        /* outside edges sit 0.5 in from the paper edge and are never trimmed:
-           column 1 hugs the left, every other column the right; row A hugs the top, every other row the bottom */
-        const px = c === 0 ? EDGE : pw - EDGE - g.advX;
-        const py = r === 0 ? ph - EDGE - g.advY : EDGE;
-        const cx0 = px - lB, cx1 = px + g.advX + rB, cy0 = py - bB, cy1 = py + g.advY + tB;
-        const clip = `${f2(cx0)} ${f2(cy0)} ${f2(cx1 - cx0)} ${f2(cy1 - cy0)} re W n\n`;
-        const bx0 = g.x0 + (c * g.advX - lB) / g.k, bx1 = g.x0 + ((c + 1) * g.advX + rB) / g.k;
-        const by0 = g.y0 + (rb * g.advY - bB) / g.k, by1 = g.y0 + ((rb + 1) * g.advY + tB) / g.k;
-        const ox = px - c * g.advX, oy = py - rb * g.advY;
-        const parts = ['q\n', clip, `${hexrgb(land)} rg ${f2(cx0)} ${f2(cy0)} ${f2(cx1 - cx0)} ${f2(cy1 - cy0)} re f\n`];
-        layerParts(parts, g, collect(bx0 - 6, by0 - 6, bx1 + 6, by1 + 6), ox - g.x0 * g.k, oy - g.y0 * g.k, P);
-        parts.push('Q\nq\n', clip, `1 0 0 -1 ${f2(ox)} ${f2(oy + g.mapH)} cm\n`, overlayOps, 'Q\n');
-        // trim marks (interior seams only) just outside the printed map
-        let mk = '0.33 0.33 0.33 RG 0.4 w /A100 gs [] 0 d\n';
-        const TK = 18;
-        for (const [x, inner] of [[px, c > 0], [px + g.advX, c < cols - 1]]) {
-          if (!inner) continue;
-          mk += `${f2(x)} ${f2(cy0 - 2 - TK)} m ${f2(x)} ${f2(cy0 - 2)} l S ${f2(x)} ${f2(cy1 + 2)} m ${f2(x)} ${f2(cy1 + 2 + TK)} l S\n`;
-        }
-        for (const [yy, inner] of [[py, rb > 0], [py + g.advY, rb < rows - 1]]) {
-          if (!inner) continue;
-          mk += `${f2(cx0 - 2 - TK)} ${f2(yy)} m ${f2(cx0 - 2)} ${f2(yy)} l S ${f2(cx1 + 2)} ${f2(yy)} m ${f2(cx1 + 2 + TK)} ${f2(yy)} l S\n`;
-        }
-        // page name goes where it will be cut off (above the top trim) or covered (below row A)
-        const lab = rowName(r) + (c + 1);
-        const ly = r === 0 ? cy0 - 9 : cy1 + 4;
-        mk += `0.33 0.33 0.33 rg BT /F1 5.5 Tf ${f2(px + 26)} ${f2(ly)} Td (${lab}   row ${rowName(r)} of ${rowName(rows - 1)}, column ${c + 1} of ${cols}) Tj ET\n`;
-        parts.push(mk);
-        await addPage(pw, ph, parts, ox, oy);
+        const t = tileBox(g, r, c);
+        const terr = state.terrain ? await terrainImage(g, tileWindow(g, t)) : null;
+        const { parts, ox, oy } = tileParts(g, P, land, ov, t, terr);
+        await addPage(pw, ph, parts, ox, oy, terr);
         n++;
         if (n % 4 === 0 || n === total) { progress(.35 + .65 * n / total, `Building page ${n} of ${total}`); await tick(); }
       }
@@ -972,41 +1801,209 @@ async function buildPdf(mode) {
 
   doc.obj(idF1, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
   doc.obj(idF2, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
-  doc.obj(idGS, '<< ' + [...alphas].map(a => `/A${a} << /CA ${a / 100} /ca ${a / 100} >>`).join(' ') + ' >>');
+  doc.obj(idF3, '<< /Type /Font /Subtype /Type1 /BaseFont /Times-Roman /Encoding /WinAnsiEncoding >>');
+  doc.obj(idF4, '<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold /Encoding /WinAnsiEncoding >>');
+  doc.obj(idF5, '<< /Type /Font /Subtype /Type1 /BaseFont /Times-Italic /Encoding /WinAnsiEncoding >>');
+  doc.obj(idGS, '<< ' + [...alphas].map(a => `/A${a} << /CA ${a / 100} /ca ${a / 100} >>`).join(' ') +
+    (state.terrain ? ` /TS << /Type /ExtGState /BM /Multiply /CA ${state.terrainAmt / 100} /ca ${state.terrainAmt / 100} >>` : '') + ' >>');
   if (!hasImg) doc.obj(idImg, '<< >>');
   doc.obj(idPages, `<< /Type /Pages /Count ${kids.length} /Kids [${kids.map(k => k + ' 0 R').join(' ')}] >>`);
   doc.obj(idCat, `<< /Type /Catalog /Pages ${idPages} 0 R >>`);
   return { blob: doc.finish(idCat), g };
 }
 
+function saveBlob(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+}
+const setBusy = v => { busy = v; for (const id of ['dlPages', 'dlSheet', 'dlPng', 'dlTest']) $(id).disabled = v; };
+const fileStem = () => {
+  const size = `${feet(state.wallW)} x ${feet(state.wallH)}`.replace(/ /g, '');
+  return `Louisville-map-${size}${state.theme === 'classic' ? '' : '-' + state.theme}`;
+};
 async function download(mode) {
   if (busy) return;
-  busy = true;
-  $('dlPages').disabled = $('dlSheet').disabled = true;
+  setBusy(true);
   try {
     const { blob, g } = await buildPdf(mode);
-    const size = `${feet(state.wallW)} x ${feet(state.wallH)}`.replace(/ /g, '');
-    const st = state.theme === 'classic' ? '' : '-' + state.theme;
-    const name = mode === 'sheet' ? `Louisville-map-${size}${st}-single-sheet.pdf`
-      : `Louisville-map-${size}${st}-${state.paper}-${g.cols * g.rows}-pages.pdf`;
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = name;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    const name = mode === 'sheet' ? `${fileStem()}-single-sheet.pdf`
+      : mode === 'test' ? `${fileStem()}-${state.paper}-test-page.pdf`
+      : `${fileStem()}-${state.paper}-${g.cols * g.rows}-pages.pdf`;
+    saveBlob(blob, name);
     progress(1, `Done: ${name} (${(blob.size / 1048576).toFixed(1)} MB)`);
   } catch (err) {
     console.error(err);
     progress(0, 'Something went wrong: ' + err.message);
   } finally {
-    busy = false;
-    $('dlPages').disabled = false;
+    setBusy(false);
     schedule();
   }
 }
 $('dlPages').addEventListener('click', () => download('pages'));
 $('dlSheet').addEventListener('click', () => download('sheet'));
+$('dlTest').addEventListener('click', () => download('test'));
 
-window.__mapmaker = { state, geom, buildPdf, schedule, THEMES, PROJ };
+/* ---- PNG export of the single sheet, drawn by the same code as the sharp preview */
+const PNG_MAX_SIDE = 12000, PNG_MAX_PIXELS = 120e6;
+const crcTable = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+const crc32 = b => { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = crcTable[(c ^ b[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
+/* PNG fresh from canvas.toBlob has no resolution tag; add a pHYs chunk so print software knows the dpi */
+async function pngWithDpi(blob, dpi) {
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  if (buf.length < 41 || buf[1] !== 0x50) return blob;
+  const ppm = Math.round(dpi / .0254), ch = new Uint8Array(21), dv = new DataView(ch.buffer);
+  dv.setUint32(0, 9); ch.set([0x70, 0x48, 0x59, 0x73], 4); dv.setUint32(8, ppm); dv.setUint32(12, ppm); ch[16] = 1;
+  dv.setUint32(17, crc32(ch.subarray(4, 17)));
+  return new Blob([buf.subarray(0, 33), ch, buf.subarray(33)], { type: 'image/png' });
+}
+async function downloadPng() {
+  if (busy) return;
+  setBusy(true);
+  try {
+    const g = geom();
+    const inW = g.mapW / 72, inH = g.mapH / 72;
+    const maxDpi = Math.min(PNG_MAX_SIDE / Math.max(inW, inH), Math.sqrt(PNG_MAX_PIXELS / (inW * inH)));
+    const want = +$('pngDpi').value || 150;
+    const dpi = want <= maxDpi ? want : Math.floor(maxDpi);
+    if (dpi < 20) throw new Error('This sheet is too large for a PNG. Use the PDF instead.');
+    const wpx = Math.min(PNG_MAX_SIDE, Math.round(inW * dpi)), hpx = Math.min(PNG_MAX_SIDE, Math.round(inH * dpi));
+    const keys = cellKeys(g.x0 - 20, g.y0 - 20, g.x0 + g.vw + 20, g.y0 + g.vh + 20);
+    await loadCells(keys, (d, n) => progress(.3 * d / n, `Loading map detail ${d} of ${n}`));
+    if (state.hood && !hoodByName(state.hood)) await loadHoods();
+    const placed = await computeLabels(g);
+    if (state.terrain) await hillReady();
+    progress(.3, `Drawing ${wpx} x ${hpx} pixels`);
+    await tick();
+    const can = document.createElement('canvas');
+    can.width = wpx; can.height = hpx;
+    const ctx = can.getContext('2d');
+    if (!ctx || can.width !== wpx) throw new Error('Your browser could not make an image this large. Try 150 dpi or use the PDF.');
+    await paintVector(can, g, keys, wpx / g.mapW, () => false, (i, n) => progress(.3 + .5 * i / n, `Drawing the map (${i} of ${n})`));
+    progress(.85, 'Drawing the border and labels');
+    drawTerrain(ctx, g, wpx / g.mapW);
+    ctx.setTransform(wpx / g.mapW, 0, 0, wpx / g.mapW, 0, 0);
+    drawOverlay(ctx, g, overlayOpt(), placed.length ? c => drawLabels(c, placed, THEMES[state.theme].ov) : null);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    progress(.92, 'Saving the PNG');
+    await tick();
+    let blob = await new Promise(r => can.toBlob(r, 'image/png'));
+    if (!blob) throw new Error('Your browser could not save an image this large. Try 150 dpi or use the PDF.');
+    blob = await pngWithDpi(blob, dpi);
+    const name = `${fileStem()}-single-sheet-${dpi}dpi.png`;
+    saveBlob(blob, name);
+    progress(1, (dpi < want ? `Used ${dpi} dpi instead of ${want}: the image is capped at ${PNG_MAX_SIDE} pixels on a side and 120 megapixels. ` : '') +
+      `Done: ${name} (${(blob.size / 1048576).toFixed(1)} MB)`);
+  } catch (err) {
+    console.error(err);
+    progress(0, 'Something went wrong: ' + err.message);
+  } finally {
+    setBusy(false);
+    schedule();
+  }
+}
+$('dlPng').addEventListener('click', downloadPng);
+
+/* ---- shareable link: the whole state lives in the URL hash */
+const ORIENT_CODE = { auto: 'a', portrait: 'p', landscape: 'l' };
+const FLAGS = ['border', 'compass', 'rings', 'grid'], TOUCHES = ['trees', 'waves', 'shadows'];
+const enc1 = v => encodeURIComponent(v).replace(/%3A/gi, ':').replace(/%2C/gi, ',');
+function encodeState() {
+  const kv = [['w', +state.wallW.toFixed(2)], ['h', +state.wallH.toFixed(2)], ['p', state.paper], ['o', ORIENT_CODE[state.orient]], ['s', state.theme],
+    ['f', FLAGS.map(k => +state[k]).join('')], ['x', TOUCHES.map(k => +state[k]).join('')],
+    ['z', +state.zoom.toFixed(3)], ['c', `${+state.cx.toFixed(1)},${+state.cy.toFixed(1)}`]];
+  if (state.title) kv.push(['t', state.title]);
+  if (state.subtitle) kv.push(['u', state.subtitle]);
+  if (state.tpos !== 'br') kv.push(['tp', state.tpos]);
+  if (state.hood) kv.push(['n', state.hood]);
+  if (state.labStreets || state.labPlaces) kv.push(['l', `${+state.labStreets}${+state.labPlaces}`]);
+  if (state.terrain) kv.push(['e', Math.round(state.terrainAmt)]);
+  if (state.markers.length) kv.push(['m', state.markers.map(m => `${m.t}:${+m.x.toFixed(1)}:${+m.y.toFixed(1)}`).join('~')]);
+  return '#' + kv.map(([k, v]) => k + '=' + enc1(v)).join('&');
+}
+/* read a hash into state; every value is validated and clamped, anything unusable is ignored */
+function applyHash(hash) {
+  const q = Object.create(null);
+  for (const part of String(hash).replace(/^#/, '').split('&')) {
+    const i = part.indexOf('=');
+    if (i < 1) continue;
+    try { q[part.slice(0, i)] = decodeURIComponent(part.slice(i + 1)); } catch (e) { /* ignore */ }
+  }
+  const num = (k, a, b) => { const v = q[k] === undefined || q[k] === '' ? NaN : Number(q[k]); return Number.isFinite(v) ? clamp(v, a, b) : null; };
+  let v;
+  if ((v = num('w', 12, 192)) !== null) state.wallW = v;
+  if ((v = num('h', 12, 192)) !== null) state.wallH = v;
+  if (q.p in PAPERS) state.paper = q.p;
+  const o = Object.keys(ORIENT_CODE).find(k => ORIENT_CODE[k] === q.o);
+  if (o) state.orient = o;
+  if (q.s in THEMES) state.theme = q.s;
+  if (/^[01]{4}$/.test(q.f || '')) FLAGS.forEach((k, i) => { state[k] = q.f[i] === '1'; });
+  if (/^[01]{3}$/.test(q.x || '')) TOUCHES.forEach((k, i) => { state[k] = q.x[i] === '1'; });
+  if ((v = num('z', 1, 10000)) !== null) state.zoom = v;
+  const c = (q.c || '').split(',');
+  if (c.length === 2 && c[0] !== '' && c[1] !== '' && Number.isFinite(+c[0]) && Number.isFinite(+c[1])) { state.cx = clamp(+c[0], 0, M.size); state.cy = clamp(+c[1], 0, M.size); }
+  if (q.t !== undefined) state.title = cleanText(q.t, 60);
+  if (q.u !== undefined) state.subtitle = cleanText(q.u, 80);
+  if (q.tp === 'br' || q.tp === 'bc' || q.tp === 'tc') state.tpos = q.tp;
+  state.hood = q.n ? cleanText(q.n, 60) : '';               // checked against the real list once hoods.json has loaded
+  state.labStreets = /^[01]{2}$/.test(q.l || '') && q.l[0] === '1';
+  state.labPlaces = /^[01]{2}$/.test(q.l || '') && q.l[1] === '1';
+  state.terrain = false; state.terrainAmt = 60;
+  if ((v = num('e', 10, 100)) !== null) { state.terrain = true; state.terrainAmt = Math.round(v); }
+  if (state.hood && hoodMap.size && !hoodMap.has(state.hood)) state.hood = '';
+  if (state.hood) loadHoods().catch(() => {});
+  if (q.m) {
+    const out = [];
+    for (const part of q.m.split('~')) {
+      const [t, x, y] = part.split(':');
+      if (!(t in MARK_NAMES) || x === undefined || y === undefined || x === '' || y === '' || !Number.isFinite(+x) || !Number.isFinite(+y)) continue;
+      if (out.length < MAXMARK) out.push({ t, x: clamp(+x, 0, M.size), y: clamp(+y, 0, M.size) });
+    }
+    state.markers = out;
+  }
+}
+/* push the state into every control */
+function syncUI() {
+  normWall();
+  document.querySelectorAll('input[name=paper]').forEach(r => { r.checked = r.value === state.paper; });
+  $('orient').value = state.orient;
+  for (const [id, key] of CHECKS) $(id).checked = state[key];
+  syncTheme();
+  $('tTitle').value = state.title; $('tSub').value = state.subtitle; $('tPos').value = state.tpos;
+  renderMarkerList();
+  syncLayerUI();
+}
+let hashT = 0, lastHash = '';
+function queueHash() { clearTimeout(hashT); hashT = setTimeout(syncHash, 500); }
+function syncHash() {
+  const h = encodeState();
+  if (h === lastHash) return;
+  lastHash = h;
+  try { history.replaceState(null, '', h); } catch (e) { /* some sandboxes forbid it */ }
+}
+$('copyLink').addEventListener('click', async () => {
+  geom();
+  clearTimeout(hashT); syncHash();
+  const url = location.href, btn = $('copyLink');
+  let ok = false;
+  try { await navigator.clipboard.writeText(url); ok = true; } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = url; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { ok = document.execCommand('copy'); } catch (e2) { /* fall through */ }
+    ta.remove();
+  }
+  btn.textContent = ok ? 'Link copied' : 'Could not copy: use the address bar';
+  clearTimeout(btn._t); btn._t = setTimeout(() => { btn.textContent = 'Copy link to this map'; }, 2200);
+});
+
+window.__mapmaker = { placeLabels, computeLabels, loadHoods, terrainImage, hoodByName, labelState, state, geom, buildPdf, schedule, THEMES, PROJ, PdfCtx, drawOverlay, textW, winAnsi, pdfStr, pdfFont, encodeState, applyHash, syncUI, overlayOpt, downloadPng };
+if (location.hash.length > 1) { applyHash(location.hash); syncUI(); }
+lastHash = encodeState();
+setPlacing(null);
+renderMarkerList();
+syncLayerUI();
 readWall();
 })();

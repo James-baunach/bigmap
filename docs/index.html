@@ -39,7 +39,15 @@
           <input id="hIn" type="number" min="0" max="11.5" step="0.5" value="0" inputmode="decimal"><i>in</i></span>
         </label>
       </div>
-      <p class="hint">The finished map, including a 0.5 in white paper border, comes out exactly this size. Between 2 and 16 ft each way.</p>
+      <p class="hint">The finished map, including a 0.5 in white paper border, comes out exactly this size. Between 1 and 16 ft each way.</p>
+      <p class="hint">Poster sizes:</p>
+      <div class="btns presets">
+        <button type="button" data-poster="18x24">18 x 24 in <small>portrait</small></button>
+        <button type="button" data-poster="24x18">24 x 18 in <small>landscape</small></button>
+        <button type="button" data-poster="24x36">24 x 36 in <small>portrait</small></button>
+        <button type="button" data-poster="36x24">36 x 24 in <small>landscape</small></button>
+      </div>
+      <p class="hint note" id="posterNote" hidden>This is a poster size. Use "Download single sheet" below and take the PDF to a print shop or a large-format printer.</p>
     </section>
 
     <section>
@@ -47,6 +55,8 @@
       <div class="seg" role="radiogroup" aria-label="Paper size">
         <label><input type="radio" name="paper" value="letter" checked><b>Letter</b><small>8.5 x 11 in</small></label>
         <label><input type="radio" name="paper" value="legal"><b>Legal</b><small>8.5 x 14 in</small></label>
+        <label><input type="radio" name="paper" value="a4"><b>A4</b><small>210 x 297 mm</small></label>
+        <label><input type="radio" name="paper" value="tabloid"><b>Tabloid</b><small>11 x 17 in</small></label>
       </div>
       <label class="row">Page direction
         <select id="orient">
@@ -77,6 +87,13 @@
       <label class="row">Jump to
         <select id="place"><option value="">Choose a neighborhood...</option></select>
       </label>
+      <div class="find">
+        <label class="lbl" for="addr">Find an address</label>
+        <div class="addr"><input id="addr" type="text" maxlength="120" placeholder="Street address or place" autocomplete="off"><button id="addrGo" type="button">Find</button></div>
+        <ul id="addrRes" class="results"></ul>
+        <p class="hint" id="addrMsg" role="status" aria-live="polite"></p>
+        <p class="hint small">The text you type here is sent to OpenStreetMap's search service when you press Find.</p>
+      </div>
       <div class="btns">
         <button id="fitAll" type="button">Show whole area</button>
         <button id="goDowntown" type="button">Center on downtown</button>
@@ -89,24 +106,82 @@
       </div>
     </section>
 
+    <section>
+      <h2><span>5</span> Highlights, names and terrain</h2>
+      <p class="hint">All optional and off by default. With none of these, the map stays unlabeled.</p>
+      <label class="row">Highlight a neighborhood
+        <select id="hood"><option value="">None</option></select>
+      </label>
+      <div class="btns">
+        <button id="hoodFit" type="button" disabled>Fit map to it</button>
+      </div>
+      <p class="hint">The rest of the map fades back and the boundary gets an outline.</p>
+      <div class="checks">
+        <label><input id="oStreets" type="checkbox"> Street names</label>
+        <label><input id="oPlaces" type="checkbox"> Neighborhood and city names</label>
+        <label><input id="oTerrain" type="checkbox"> Terrain shading</label>
+      </div>
+      <label class="row">Terrain strength
+        <input id="terrAmt" type="range" min="10" max="100" step="5" value="60" disabled>
+        <output id="terrVal">60%</output>
+      </label>
+      <p class="hint">Street names show up as you zoom in. Small streets appear at about neighborhood scale.</p>
+      <p class="hint" id="layerMsg" role="status" aria-live="polite"></p>
+    </section>
+
+    <section>
+      <h2><span>6</span> Title and markers</h2>
+      <p class="hint">Optional. With no title, the map stays unlabeled.</p>
+      <label class="row">Title
+        <input id="tTitle" class="txt" type="text" maxlength="60" placeholder="e.g. The Highlands" autocomplete="off">
+      </label>
+      <label class="row">Subtitle
+        <input id="tSub" class="txt" type="text" maxlength="80" placeholder="e.g. The Miller family, 2026" autocomplete="off">
+      </label>
+      <label class="row">Position
+        <select id="tPos">
+          <option value="br">Bottom right</option>
+          <option value="bc">Bottom center</option>
+          <option value="tc">Top center</option>
+        </select>
+      </label>
+      <p class="hint">Add a marker:</p>
+      <div class="marks">
+        <button type="button" data-mark="heart" aria-pressed="false">Heart</button>
+        <button type="button" data-mark="star" aria-pressed="false">Star</button>
+        <button type="button" data-mark="house" aria-pressed="false">House</button>
+        <button type="button" data-mark="pin" aria-pressed="false">Pin</button>
+      </div>
+      <p class="hint" id="mHint" role="status" aria-live="polite"></p>
+      <ul id="mList" class="mlist"></ul>
+      <button id="mClear" type="button" class="small" hidden>Remove all markers</button>
+    </section>
+
     <section class="summary">
       <dl>
         <div><dt>Pages</dt><dd id="sPages">-</dd></div>
         <div><dt>Map scale</dt><dd id="sScale">-</dd></div>
         <div><dt>Area shown</dt><dd id="sArea">-</dd></div>
         <div><dt>White border</dt><dd id="sBorder">-</dd></div>
+        <div><dt>Ink coverage</dt><dd id="sInk">-</dd></div>
       </dl>
     </section>
 
     <section>
-      <h2><span>5</span> Download</h2>
+      <h2><span>7</span> Download</h2>
       <button id="dlPages" class="primary" type="button">Download printable pages (PDF)</button>
       <button id="dlSheet" type="button">Download single sheet (PDF, for a print shop)</button>
+      <div class="pngrow">
+        <button id="dlPng" type="button">Download single sheet as PNG</button>
+        <select id="pngDpi" aria-label="PNG resolution"><option value="150">150 dpi</option><option value="300">300 dpi</option></select>
+      </div>
+      <button id="dlTest" class="sub" type="button">Download test page (checks your printer scale)</button>
+      <button id="copyLink" class="sub" type="button">Copy link to this map</button>
       <div id="progress" hidden><div id="bar"></div><span id="ptext"></span></div>
       <p class="hint">Page 1 of the printable PDF is an assembly guide. Print at Actual size / 100%.</p>
     </section>
 
-    <footer>Map data &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>. The preview is lower resolution than the PDF.</footer>
+    <footer>Map data &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>. Neighborhood boundaries: LOJIC / Louisville Metro open data. Elevation: Mapzen / AWS Terrain Tiles (USGS 3DEP and other sources). The preview is lower resolution than the PDF.</footer>
   </aside>
 
   <div id="stage"><canvas id="view" aria-label="Map preview. Drag to move, scroll to zoom."></canvas></div>
