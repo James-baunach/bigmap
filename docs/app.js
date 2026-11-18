@@ -526,6 +526,18 @@ const state = {
 
 /* ------------------------------------------------------------ layout */
 const EDGE = 36;             // white paper border around the finished map: 0.5 in
+/* How much map each column (or row) of pages carries. Every page is filled to its full printable width `full`;
+   only the last one takes what is left. If that would be a thin sliver, the last two share their total equally.
+   Returns the sizes and the offsets of each start. */
+function spans(total, full, n) {
+  if (n === 1) return { size: [total], start: [0] };
+  const size = Array(n).fill(full);
+  const rem = total - (n - 1) * full;
+  if (rem < full / 2) size[n - 2] = size[n - 1] = (full + rem) / 2; else size[n - 1] = rem;
+  const start = [0];
+  for (let i = 1; i < n; i++) start.push(start[i - 1] + size[i - 1]);
+  return { size, start };
+}
 function layout() {
   const W = state.wallW * 72, H = state.wallH * 72;
   const [short, long] = PAPERS[state.paper] || PAPERS.letter;
@@ -536,7 +548,10 @@ function layout() {
     // one column or row is allowed when the map fits; the page code then centres the map on the sheet
     const cols = Math.max(1, Math.ceil(mapW / (pw - 2 * EDGE) - 1e-9));
     const rows = Math.max(1, Math.ceil(mapH / (ph - 2 * EDGE) - 1e-9));
-    opts.push({ W, H, pw, ph, name, cols, rows, advX: mapW / cols, advY: mapH / rows, mx: EDGE, my: EDGE, mapW, mapH });
+    const sx = spans(mapW, pw - 2 * EDGE, cols), sy = spans(mapH, ph - 2 * EDGE, rows);
+    // colW/colX: width and left offset of each column; rowH/rowY: height and top offset of each row (row A at the top)
+    opts.push({ W, H, pw, ph, name, cols, rows, colW: sx.size, colX: sx.start, rowH: sy.size, rowY: sy.start,
+      advX: Math.max(...sx.size), advY: Math.max(...sy.size), mx: EDGE, my: EDGE, mapW, mapH });
   }
   opts.sort((a, b) => a.cols * a.rows - b.cols * b.rows);
   return opts[0];
@@ -1646,8 +1661,8 @@ function render() {
   if (state.grid) {
     ctx.strokeStyle = 'rgba(168,35,44,.45)'; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
     ctx.beginPath();
-    for (let i = 1; i < g.cols; i++) { const x = Math.round(i * g.advX * disp) + .5; ctx.moveTo(x, 0); ctx.lineTo(x, g.mapH * disp); }
-    for (let j = 1; j < g.rows; j++) { const y = Math.round(j * g.advY * disp) + .5; ctx.moveTo(0, y); ctx.lineTo(g.mapW * disp, y); }
+    for (let i = 1; i < g.cols; i++) { const x = Math.round(g.colX[i] * disp) + .5; ctx.moveTo(x, 0); ctx.lineTo(x, g.mapH * disp); }
+    for (let j = 1; j < g.rows; j++) { const y = Math.round(g.rowY[j] * disp) + .5; ctx.moveTo(0, y); ctx.lineTo(g.mapW * disp, y); }
     ctx.stroke();
   }
   ctx.restore();
@@ -2841,13 +2856,16 @@ function tileBox(g, r, c) {
   const { pw, ph, cols, rows } = g;
   const rb = rows - 1 - r;
   const lB = c > 0 ? BLEED : 0, rB = c < cols - 1 ? BLEED : 0, bB = rb > 0 ? BLEED : 0, tB = rb < rows - 1 ? BLEED : 0;
-  const px = cols === 1 ? (pw - g.advX) / 2 : c === 0 ? EDGE : pw - EDGE - g.advX;
-  const py = rows === 1 ? (ph - g.advY) / 2 : r === 0 ? ph - EDGE - g.advY : EDGE;
-  return { r, c, rb, px, py, cx0: px - lB, cx1: px + g.advX + rB, cy0: py - bB, cy1: py + g.advY + tB };
+  const w = g.colW[c], h = g.rowH[r];
+  const px = cols === 1 ? (pw - w) / 2 : c === 0 ? EDGE : pw - EDGE - w;
+  const py = rows === 1 ? (ph - h) / 2 : r === 0 ? ph - EDGE - h : EDGE;
+  // mx0/my0: the tile's lower-left corner in map points measured from the map's lower-left (y up)
+  const mx0 = g.colX[c], my0 = g.mapH - g.rowY[r] - h;
+  return { r, c, rb, w, h, mx0, my0, px, py, cx0: px - lB, cx1: px + w + rB, cy0: py - bB, cy1: py + h + tB };
 }
 /* the base-coordinate window a tile needs (with bleed), for loading and collecting features */
-const tileWindow = (g, t) => [g.x0 + (t.c * g.advX - (t.px - t.cx0)) / g.k, g.y0 + (t.rb * g.advY - (t.py - t.cy0)) / g.k,
-  g.x0 + ((t.c + 1) * g.advX + (t.cx1 - t.px - g.advX)) / g.k, g.y0 + ((t.rb + 1) * g.advY + (t.cy1 - t.py - g.advY)) / g.k];
+const tileWindow = (g, t) => [g.x0 + (t.mx0 - (t.px - t.cx0)) / g.k, g.y0 + (t.my0 - (t.py - t.cy0)) / g.k,
+  g.x0 + (t.mx0 + t.w + (t.cx1 - t.px - t.w)) / g.k, g.y0 + (t.my0 + t.h + (t.cy1 - t.py - t.h)) / g.k];
 
 /* the terrain image drawn in base coordinates (the current matrix is the map layers' matrix), multiplied over the map */
 const terrainOp = t => `q /TS gs ${f5(t.bx1 - t.bx0)} 0 0 ${f5(t.by1 - t.by0)} ${f5(t.bx0)} ${f5(t.by0)} cm /Tr1 Do Q\n`;
@@ -2858,7 +2876,7 @@ async function tileParts(g, P, land, ov, t, terr) {
   const { r, c, rb, px, py, cx0, cx1, cy0, cy1 } = t;
   const clip = `${f2(cx0)} ${f2(cy0)} ${f2(cx1 - cx0)} ${f2(cy1 - cy0)} re W n\n`;
   const [bx0, by0, bx1, by1] = tileWindow(g, t);
-  const ox = px - c * g.advX, oy = py - rb * g.advY;
+  const ox = px - t.mx0, oy = py - t.my0;
   const parts = ['q\n', clip, `${hexrgb(land)} rg ${f2(cx0)} ${f2(cy0)} ${f2(cx1 - cx0)} ${f2(cy1 - cy0)} re f\n`];
   if (ov.art) {
     const pad = artPad(P, g.k);
@@ -2870,11 +2888,11 @@ async function tileParts(g, P, land, ov, t, terr) {
   // trim marks (interior seams only) just outside the printed map
   let mk = '0.33 0.33 0.33 RG 0.4 w /A100 gs [] 0 d\n';
   const TK = 18;
-  for (const [x, inner] of [[px, c > 0], [px + g.advX, c < cols - 1]]) {
+  for (const [x, inner] of [[px, c > 0], [px + t.w, c < cols - 1]]) {
     if (!inner) continue;
     mk += `${f2(x)} ${f2(cy0 - 2 - TK)} m ${f2(x)} ${f2(cy0 - 2)} l S ${f2(x)} ${f2(cy1 + 2)} m ${f2(x)} ${f2(cy1 + 2 + TK)} l S\n`;
   }
-  for (const [yy, inner] of [[py, rb > 0], [py + g.advY, rb < rows - 1]]) {
+  for (const [yy, inner] of [[py, rb > 0], [py + t.h, rb < rows - 1]]) {
     if (!inner) continue;
     mk += `${f2(cx0 - 2 - TK)} ${f2(yy)} m ${f2(cx0 - 2)} ${f2(yy)} l S ${f2(cx1 + 2)} ${f2(yy)} m ${f2(cx1 + 2 + TK)} ${f2(yy)} l S\n`;
   }
@@ -2895,7 +2913,7 @@ function rulerOps(g, t) {
   const top = roomTop >= roomBot;
   const room = Math.max(roomTop, roomBot);
   const f = clamp(room / 22, .55, 1);                          // scale down the ruler in a tight margin
-  const lo = cols > 1 && t.c > 0 ? t.px + 8 : 8, hi = cols > 1 && t.c < cols - 1 ? t.px + g.advX - 8 : pw - 8;
+  const lo = cols > 1 && t.c > 0 ? t.px + 8 : 8, hi = cols > 1 && t.c < cols - 1 ? t.px + t.w - 8 : pw - 8;
   const CM = 28.3465, IN = 72, len = 100 * CM / 10;            // 10 cm
   const x0 = lo + Math.max(0, (hi - lo - len) / 2);
   // band for the ruler (y up): measured away from the page edge by 12 pt (printers do not print right to the edge)
@@ -3040,7 +3058,7 @@ async function buildPdf(mode) {
 
     const { pw, ph, cols, rows } = g;
     const total = cols * rows;
-    const advTxt = `${f2(g.advX / 72)} x ${f2(g.advY / 72)} in`;
+    const advTxt = `up to ${f2(g.advX / 72)} x ${f2(g.advY / 72)} in`;
     const lines = [
       `Finished size ${feet(state.wallW)} wide x ${feet(state.wallH)} tall, including a 0.5 in white paper border all round.`,
       `${total} pages: ${rows} rows (A at the top to ${rowName(rows - 1)}) x ${cols} columns (1 at the left to ${cols}). Paper ${f2(pw / 72)} x ${f2(ph / 72)} in.`,
@@ -3074,15 +3092,16 @@ async function buildPdf(mode) {
     const gw = g.mapW * sc, gh = g.mapH * sc, gx = (pw - gw) / 2, gy = y - gh;
     gp.push(`q ${f2(gw)} 0 0 ${f2(gh)} ${f2(gx)} ${f2(gy)} cm /Im1 Do Q\n`);
     gp.push('0 0 0 RG 0.4 w\n');
-    const cw = gw / cols, rh = gh / rows;
-    for (let i = 0; i <= cols; i++) gp.push(`${f2(gx + i * cw)} ${f2(gy)} m ${f2(gx + i * cw)} ${f2(gy + gh)} l S\n`);
-    for (let j = 0; j <= rows; j++) gp.push(`${f2(gx)} ${f2(gy + j * rh)} m ${f2(gx + gw)} ${f2(gy + j * rh)} l S\n`);
+    const xs = [...g.colX, g.mapW].map(v => gx + v * sc), ys = [...g.rowY, g.mapH].map(v => gy + gh - v * sc);
+    for (const x of xs) gp.push(`${f2(x)} ${f2(gy)} m ${f2(x)} ${f2(gy + gh)} l S\n`);
+    for (const y of ys) gp.push(`${f2(gx)} ${f2(y)} m ${f2(gx + gw)} ${f2(y)} l S\n`);
     alphas.add(80);
     for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
       const lab = rowName(r) + (c + 1);
+      const cw = g.colW[c] * sc, rh = g.rowH[r] * sc;
       const sz = Math.min(7, cw / (lab.length * .62 + .6), rh * .7);
       const w = lab.length * sz * .6;
-      const tx = gx + (c + .5) * cw - w / 2, ty = gy + gh - (r + .5) * rh - sz * .36;
+      const tx = xs[c] + cw / 2 - w / 2, ty = ys[r] - rh / 2 - sz * .36;
       gp.push(`/A80 gs 1 1 1 rg ${f2(tx - 1)} ${f2(ty - 1)} ${f2(w + 2)} ${f2(sz + 1.2)} re f /A100 gs ${ink} rg ` +
         `BT /F2 ${f2(sz)} Tf ${f2(tx)} ${f2(ty)} Td (${lab}) Tj ET\n`);
     }
