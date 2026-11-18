@@ -489,13 +489,9 @@ function drawHatch(ctx, pat) {
 }
 
 /* lat/lon -> base map coordinates (same projection as the data build) */
-const PROJ = (() => {
-  const R = 6378137, rad = Math.PI / 180, lat0 = 38.185, lon0 = -85.675;
-  const h = 15 * 1609.344 / Math.cos(lat0 * rad);
-  const X0 = lon0 * rad * R - h, Y0 = Math.log(Math.tan(Math.PI / 4 + lat0 * rad / 2)) * R - h, S = M.size / (2 * h);
-  return (lat, lon) => [(lon * rad * R - X0) * S, (Math.log(Math.tan(Math.PI / 4 + lat * rad / 2)) * R - Y0) * S];
-})();
-const PLACES = [
+const LIVE = window.LIVE;           // set when the map is of somewhere else, downloaded live (see live.js); null for Louisville
+const PROJ = LIVE ? LIVE.proj.fwd : window.makeProj(38.185, -85.675, M.size).fwd;
+const PLACES = LIVE ? [] : [
   ['Downtown', 38.2545, -85.7585], ['NuLu', 38.2530, -85.7385], ['Butchertown', 38.2590, -85.7290],
   ['Old Louisville', 38.2300, -85.7640], ['The Highlands', 38.2330, -85.7090], ['Germantown', 38.2290, -85.7350],
   ['Clifton', 38.2560, -85.7090], ['Crescent Hill', 38.2530, -85.6890], ['St. Matthews', 38.2530, -85.6560],
@@ -1467,6 +1463,7 @@ const canvas = $('view'), stage = $('stage');
 let raf = 0, disp = 1;                     // disp = css px per point
 const imgs = {};
 function themeImg() {
+  if (LIVE) return liveOverview();
   const t = state.theme;
   if (!imgs[t]) {
     const im = new Image();
@@ -1628,6 +1625,34 @@ async function renderVector() {
   schedule();
 }
 
+/* Live areas have no ready-made overview pictures: download every cell once, then paint the whole area into a canvas
+   (about 2400 px across) in the current style. Rebuilt when the style changes. */
+let liveImg = null, liveRun = 0, liveStatus = 'Loading map...';
+const liveCover = () => { const g = geom(); return { g, keys: cellKeys(0, 0, M.size, M.size) }; };
+function liveOverview() {
+  const sig = styleSig();
+  if (liveImg && liveImg.sig === sig) return liveImg;
+  const prev = liveImg && liveImg.ready ? liveImg : null;
+  const cur = { sig, ready: false };
+  liveImg = cur;
+  const run = ++liveRun;
+  (async () => {
+    const { g, keys } = liveCover();
+    await loadCells(keys, (d, n) => { liveStatus = `Downloading map data for ${LIVE.name}: ${d} of ${n}`; schedule(); });
+    if (run !== liveRun) return;
+    liveStatus = 'Drawing the map...'; schedule();
+    const k = g.minK, px = 2400, ppp = px / (M.size * k);
+    const g0 = Object.assign({}, g, { x0: 0, y0: 0, vw: M.size, vh: M.size, k, mapW: M.size * k, mapH: M.size * k });
+    const can = document.createElement('canvas');
+    can.width = can.height = px;
+    if (!await paintVector(can, g0, keys, ppp, () => run !== liveRun)) return;
+    can.naturalWidth = px; can.ready = true; can.sig = sig;
+    liveImg = can;
+    schedule();
+  })().catch(err => { if (run === liveRun) { liveStatus = err.message; schedule(); } });
+  return prev ? Object.assign(prev, { ready: true }) : cur;
+}
+
 /* draw the map area (no paper margin) at d px per point with its top-left at the origin */
 function paintMap(ctx, g, d, lab) {
   const img = themeImg();
@@ -1682,7 +1707,7 @@ function render() {
   } else if (decoOn() && (!dinfo || dinfo.sig !== decoSig(g))) { clearTimeout(dtimer); dtimer = setTimeout(renderDeco, 140); }
   if (!themeImg().ready) {
     ctx.fillStyle = C.ink; ctx.font = '600 15px system-ui, sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('Loading map...', cw / 2, ch / 2);
+    ctx.fillText(LIVE ? liveStatus : 'Loading map...', cw / 2, ch / 2);
   }
   queueLabels(g);
   summary(g);
@@ -1799,6 +1824,7 @@ $('zoom').addEventListener('input', e => {
   schedule();
 });
 $('fitAll').addEventListener('click', () => { state.zoom = 1; state.cx = state.cy = M.size / 2; schedule(); });
+if (LIVE) $('goDowntown').textContent = 'Center on ' + LIVE.name.split(',')[0];
 $('goDowntown').addEventListener('click', () => { [state.cx, state.cy] = M.center; schedule(); });
 
 function readWall() {
@@ -1870,7 +1896,12 @@ placeSel.addEventListener('change', () => {
 });
 
 /* ---- address search (OpenStreetMap Nominatim; one request per button press) */
-const NOMINATIM = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&countrycodes=us&viewbox=-85.95,38.40,-85.40,37.97&bounded=1&q=';
+const NOMINATIM = (() => {
+  let vb = '-85.95,38.40,-85.40,37.97';
+  if (LIVE) { const [s, w] = LIVE.proj.inv(0, 0), [n, e] = LIVE.proj.inv(M.size, M.size); vb = [w, n, e, s].map(v => v.toFixed(4)).join(','); }
+  return `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&countrycodes=us&viewbox=${vb}&bounded=1&q=`;
+})();
+const AREA_NAME = LIVE ? LIVE.name : 'Louisville';
 const inMap = (bx, by) => bx >= 0 && bx <= M.size && by >= 0 && by <= M.size;
 const addrMsg = t => { $('addrMsg').textContent = t; };
 async function findAddress() {
@@ -1887,7 +1918,7 @@ async function findAddress() {
     const data = await res.json();
     const hits = (Array.isArray(data) ? data : []).map(d => ({ lat: parseFloat(d.lat), lon: parseFloat(d.lon), name: String(d.display_name || '') }))
       .filter(h => Number.isFinite(h.lat) && Number.isFinite(h.lon)).slice(0, 5);
-    if (!hits.length) { addrMsg('No match found around Louisville. Try adding the street number, or a neighborhood name.'); return; }
+    if (!hits.length) { addrMsg('No match found around ' + AREA_NAME + '. Try adding the street number, or a neighborhood name.'); return; }
     addrMsg('Choose a result:');
     for (const h of hits) {
       const li = document.createElement('li'), b = document.createElement('button');
@@ -1986,8 +2017,16 @@ function parseTile(buf) {
   }
   return { buf, id, ly, x0, y0, x1, y1, s, e };
 }
+const cellLoads = new Map();
 async function loadCell(key) {
   if (cells.has(key)) return;
+  if (LIVE) {                                   // downloaded from OpenStreetMap; shared by everyone waiting on the same cell
+    if (!cellLoads.has(key)) cellLoads.set(key, LIVE.cell(key).then(buf => {
+      cells.set(key, parseTile(buf));
+      if (LIVE.maxId() + 2 > seen.length) seen = new Int32Array(LIVE.maxId() + 65536);
+    }).finally(() => cellLoads.delete(key)));
+    return cellLoads.get(key);
+  }
   const res = await fetch(`tiles/${key}.bin`);
   if (!res.ok) throw new Error('Could not load map data (' + key + ')');
   cells.set(key, parseTile(await gunzipIf(res)));
@@ -1998,6 +2037,7 @@ const blockCells = new Map();
 let seenB = new Int32Array(1);
 async function loadBlocks(key) {
   if (blockCells.has(key)) return;
+  if (LIVE) { blockCells.set(key, null); return; }    // merged building masses exist only for the built-in map
   let c = null;
   try {
     const res = await fetch(`art/blocks/${key}.bin`);
@@ -2037,7 +2077,7 @@ async function loadCells(keys, onProgress) {
   if (state.detail === 'simple') await pool(keys.filter(k => !blockCells.has(k)), loadBlocks);
 }
 
-const seen = new Int32Array(M.features + 2);
+let seen = new Int32Array(M.features + 2);
 let stamp = 0;
 /* features intersecting a base-coordinate window, bucketed by source layer. `flt` (detail filter, see detailFilter) drops
    buildings smaller than flt.minB and, in tiles that have merged building masses, replaces buildings by them. */
@@ -3090,7 +3130,7 @@ async function buildPdf(mode) {
     const gp = [];
     const ink = hexrgb(C.ink);
     let y = ph - 62;
-    gp.push(`${ink} rg BT /F2 19 Tf 54 ${y} Td (${esc('Louisville Wall Map: Assembly Guide')}) Tj ET\n`);
+    gp.push(`${ink} rg BT /F2 19 Tf 54 ${y} Td (${pdfStr(winAnsi(AREA_NAME.split(',')[0]).slice(0, 40) + ' Wall Map: Assembly Guide')}) Tj ET\n`);
     y -= 24;
     const fs = pw < 700 ? 9.3 : 10;
     for (const ln of lines) {
@@ -3166,7 +3206,7 @@ function saveBlob(blob, name) {
 const setBusy = v => { busy = v; for (const id of ['dlPages', 'dlSheet', 'dlPng', 'dlTest']) $(id).disabled = v; };
 const fileStem = () => {
   const g = layout(), size = `${feet(g.W / 72)} x ${feet(g.H / 72)}`.replace(/ /g, '');
-  return `Louisville-map-${size}${state.theme === 'classic' ? '' : '-' + state.theme}${state.draw === 'clean' ? '' : '-' + state.draw}${state.detail === 'full' ? '' : '-simplified'}`;
+  return `${AREA_NAME.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'map'}-map-${size}${state.theme === 'classic' ? '' : '-' + state.theme}${state.draw === 'clean' ? '' : '-' + state.draw}${state.detail === 'full' ? '' : '-simplified'}`;
 };
 async function download(mode) {
   if (busy) return;
@@ -3312,6 +3352,7 @@ function applyHash(hash) {
   state.terrain = false; state.terrainAmt = 60;
   if ((v = num('e', 10, 100)) !== null) { state.terrain = true; state.terrainAmt = Math.round(v); }
   if (state.hood && hoodMap.size && !hoodMap.has(state.hood)) state.hood = '';
+  if (LIVE) { state.hood = ''; state.labStreets = state.labPlaces = state.terrain = state.landmarks = state.shore = state.hachure = false; }
   if (state.hood) loadHoods().catch(() => {});
   if (q.m) {
     const out = [];

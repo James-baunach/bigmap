@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Louisville Wall Map Maker</title>
-<meta name="description" content="Design a printable, unlabeled wall map of Louisville, Kentucky sized to your wall and your printer paper.">
+<title>Wall Map Maker</title>
+<meta name="description" content="Design a printable, unlabeled wall map of any place in the US, sized to your wall and your printer paper. Or turn any picture into a giant poster.">
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="style.css">
 </head>
@@ -20,13 +20,33 @@
     <path d="M-.11-.26h-.18C-.31-.36-.38-.44-.5-.47-.36-.54-.19-.48-.11-.26z"/>
   </g></svg>
   <div>
-    <h1>Louisville Wall Map Maker</h1>
-    <p>Size it to your wall, frame the part of the city you want, and print it on your own printer.</p>
+    <h1 id="appTitle">Louisville Wall Map Maker</h1>
+    <p>Size it to your wall, frame the part of the city you want, and print it on your own printer. <a href="poster.html">Or print any picture this big.</a></p>
   </div>
 </header>
 
 <main>
   <aside id="panel">
+    <section>
+      <h2><span>&#9679;</span> Place</h2>
+      <p class="hint" id="areaNow">Showing: <b>Louisville, Kentucky</b> (built in, with neighborhoods, names and terrain)</p>
+      <div class="find">
+        <label class="lbl" for="areaQ">Map somewhere else in the US</label>
+        <div class="addr"><input id="areaQ" type="text" maxlength="120" placeholder="City, town or address" autocomplete="off"><button id="areaGo" type="button">Find</button></div>
+        <label class="row">Area across
+          <select id="areaMi">
+            <option value="7">7.5 miles (a town or a few neighborhoods)</option>
+            <option value="11" selected>11 miles (a small city)</option>
+            <option value="19">19 miles (a city and suburbs, slow to download)</option>
+          </select>
+        </label>
+        <ul id="areaRes" class="results"></ul>
+        <p class="hint" id="areaMsg" role="status" aria-live="polite"></p>
+        <p class="hint small">Other places are downloaded from OpenStreetMap as you use them, which can take a minute or two. Street names, neighborhoods, terrain, landmarks and old-chart details are only available for Louisville.</p>
+        <p class="hint" id="backLou" hidden><a href="./">Back to the built-in Louisville map</a></p>
+      </div>
+    </section>
+
     <section>
       <h2><span>1</span> Wall size</h2>
       <div class="dims">
@@ -102,7 +122,7 @@
       <label class="row">Zoom
         <input id="zoom" type="range" min="0" max="1000" value="0">
       </label>
-      <label class="row">Jump to
+      <label class="row lou">Jump to
         <select id="place"><option value="">Choose a neighborhood...</option></select>
       </label>
       <div class="find">
@@ -119,7 +139,7 @@
       <div class="checks">
         <label><input id="oBorder" type="checkbox" checked> Border frame</label>
         <label><input id="oCompass" type="checkbox" checked> Compass rose</label>
-        <label><input id="oRings" type="checkbox" checked> Distance rings from downtown</label>
+        <label><input id="oRings" type="checkbox" checked> Distance rings from <span id="ringsFrom">downtown</span></label>
         <label><input id="oGrid" type="checkbox" checked> Show page seams (preview only)</label>
       </div>
     </section>
@@ -127,18 +147,18 @@
     <section>
       <h2><span>5</span> Highlights, names and terrain</h2>
       <p class="hint">All optional and off by default. With none of these, the map stays unlabeled.</p>
-      <label class="row">Highlight a neighborhood
+      <label class="row lou">Highlight a neighborhood
         <select id="hood"><option value="">None</option></select>
       </label>
-      <div class="btns">
+      <div class="btns lou">
         <button id="hoodFit" type="button" disabled>Fit map to it</button>
       </div>
-      <p class="hint">The rest of the map fades back and the boundary gets an outline.</p>
+      <p class="hint lou">The rest of the map fades back and the boundary gets an outline.</p>
       <div class="checks">
-        <label><input id="oStreets" type="checkbox"> Street names</label>
-        <label><input id="oPlaces" type="checkbox"> Neighborhood and city names</label>
-        <label><input id="oTerrain" type="checkbox"> Terrain shading</label>
-        <label><input id="oLandmarks" type="checkbox"> Landmark drawings</label>
+        <label class="lou"><input id="oStreets" type="checkbox"> Street names</label>
+        <label class="lou"><input id="oPlaces" type="checkbox"> Neighborhood and city names</label>
+        <label class="lou"><input id="oTerrain" type="checkbox"> Terrain shading</label>
+        <label class="lou"><input id="oLandmarks" type="checkbox"> Landmark drawings</label>
       </div>
       <p class="hint">Lettering for names and the title:</p>
       <div class="seg thirds" role="radiogroup" aria-label="Lettering">
@@ -148,16 +168,16 @@
       </div>
       <p class="hint subhead">Old chart details</p>
       <div class="checks tight">
-        <label><input id="oShore" type="checkbox"> Shore lines on the water</label>
-        <label><input id="oHach" type="checkbox"> Hachured hills</label>
+        <label class="lou"><input id="oShore" type="checkbox"> Shore lines on the water</label>
+        <label class="lou"><input id="oHach" type="checkbox"> Hachured hills</label>
         <label><input id="oOrnate" type="checkbox"> Ornate compass and ribbon title</label>
       </div>
-      <p class="hint">Landmark drawings mark about two dozen well-known places. Hachures are fine strokes down the slopes.</p>
-      <label class="row">Terrain strength
+      <p class="hint lou">Landmark drawings mark about two dozen well-known places. Hachures are fine strokes down the slopes.</p>
+      <label class="row lou">Terrain strength
         <input id="terrAmt" type="range" min="10" max="100" step="5" value="60" disabled>
         <output id="terrVal">60%</output>
       </label>
-      <p class="hint">Street names show up as you zoom in. Small streets appear at about neighborhood scale.</p>
+      <p class="hint lou">Street names show up as you zoom in. Small streets appear at about neighborhood scale.</p>
       <p class="hint" id="layerMsg" role="status" aria-live="polite"></p>
     </section>
 
@@ -213,13 +233,15 @@
       <p class="hint">Page 1 of the printable PDF is an assembly guide. Print at Actual size / 100%.</p>
     </section>
 
-    <footer>Map data &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>. Neighborhood boundaries: LOJIC / Louisville Metro open data. Elevation: Mapzen / AWS Terrain Tiles (USGS 3DEP and other sources). Lettering fonts: Patrick Hand and IM Fell English, used under the SIL Open Font License. The preview is lower resolution than the PDF.</footer>
+    <footer>Map data &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>. Other places: tiles from <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> (OpenMapTiles schema). Neighborhood boundaries: LOJIC / Louisville Metro open data. Elevation: Mapzen / AWS Terrain Tiles (USGS 3DEP and other sources). Lettering fonts: Patrick Hand and IM Fell English, used under the SIL Open Font License. The preview is lower resolution than the PDF.</footer>
   </aside>
 
   <div id="stage"><canvas id="view" aria-label="Map preview. Drag to move, scroll to zoom."></canvas></div>
 </main>
 
 <script src="mapdata.js"></script>
+<script src="live.js"></script>
+<script src="picker.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

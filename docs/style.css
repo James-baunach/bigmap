@@ -144,3 +144,4 @@ footer a { color: inherit; }
   #stage { height: 62vh; flex: none; padding: 12px; }
   header p { display: none; }
 }
+body.live .lou { display: none !important; }
