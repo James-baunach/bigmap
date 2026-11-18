@@ -510,6 +510,7 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
 const state = {
   wallW: 120, wallH: 120, paper: 'letter', orient: 'auto',
+  whole: false,                                 // whole sheets: snap the finished size to a whole number of full pages
   zoom: 1, cx: M.size / 2, cy: M.size / 2,
   border: true, compass: true, rings: true, grid: true,
   theme: 'classic', trees: false, waves: false, shadows: false,
@@ -539,21 +540,30 @@ function spans(total, full, n) {
   return { size, start };
 }
 function layout() {
-  const W = state.wallW * 72, H = state.wallH * 72;
   const [short, long] = PAPERS[state.paper] || PAPERS.letter;
-  const mapW = W - 2 * EDGE, mapH = H - 2 * EDGE;
+  const reqW = state.wallW * 72 - 2 * EDGE, reqH = state.wallH * 72 - 2 * EDGE;   // the map size asked for
   const opts = [];
   for (const [pw, ph, name] of [[short, long, 'portrait'], [long, short, 'landscape']]) {
     if (state.orient !== 'auto' && state.orient !== name) continue;
-    // one column or row is allowed when the map fits; the page code then centres the map on the sheet
-    const cols = Math.max(1, Math.ceil(mapW / (pw - 2 * EDGE) - 1e-9));
-    const rows = Math.max(1, Math.ceil(mapH / (ph - 2 * EDGE) - 1e-9));
-    const sx = spans(mapW, pw - 2 * EDGE, cols), sy = spans(mapH, ph - 2 * EDGE, rows);
+    const fw = pw - 2 * EDGE, fh = ph - 2 * EDGE;          // the most map one page can carry
+    let cols, rows, mapW, mapH;
+    if (state.whole) {
+      // whole sheets: the nearest whole number of full pages each way, so every page is full and none is cut short
+      cols = Math.max(1, Math.round(reqW / fw)); rows = Math.max(1, Math.round(reqH / fh));
+      mapW = cols * fw; mapH = rows * fh;
+    } else {
+      // one column or row is allowed when the map fits; the page code then centres the map on the sheet
+      cols = Math.max(1, Math.ceil(reqW / fw - 1e-9)); rows = Math.max(1, Math.ceil(reqH / fh - 1e-9));
+      mapW = reqW; mapH = reqH;
+    }
+    const sx = spans(mapW, fw, cols), sy = spans(mapH, fh, rows);
     // colW/colX: width and left offset of each column; rowH/rowY: height and top offset of each row (row A at the top)
-    opts.push({ W, H, pw, ph, name, cols, rows, colW: sx.size, colX: sx.start, rowH: sy.size, rowY: sy.start,
-      advX: Math.max(...sx.size), advY: Math.max(...sy.size), mx: EDGE, my: EDGE, mapW, mapH });
+    opts.push({ W: mapW + 2 * EDGE, H: mapH + 2 * EDGE, pw, ph, name, cols, rows, colW: sx.size, colX: sx.start, rowH: sy.size, rowY: sy.start,
+      advX: Math.max(...sx.size), advY: Math.max(...sy.size), mx: EDGE, my: EDGE, mapW, mapH,
+      off: Math.abs(mapW - reqW) + Math.abs(mapH - reqH) });
   }
-  opts.sort((a, b) => a.cols * a.rows - b.cols * b.rows);
+  // fewest pages; with whole sheets, first the direction that comes closest to the size asked for
+  opts.sort((a, b) => (state.whole ? a.off - b.off : 0) || a.cols * a.rows - b.cols * b.rows);
   return opts[0];
 }
 
@@ -1693,6 +1703,9 @@ function summary(g) {
   $('sScale').textContent = mi >= .2 ? `1 in = ${mi.toFixed(2)} mi` : `1 in = ${Math.round(mi * 5280 / 10) * 10} ft`;
   $('sArea').textContent = `${(g.vw / MILE).toFixed(1)} x ${(g.vh / MILE).toFixed(1)} mi`;
   $('sBorder').textContent = inches(EDGE / 72) + ' all round';
+  const changed = Math.abs(g.W - state.wallW * 72) > .5 || Math.abs(g.H - state.wallH * 72) > .5;
+  $('wholeNote').hidden = !changed;
+  $('wholeNote').textContent = changed ? `Whole sheets: the finished map comes out ${feet(g.W / 72)} wide x ${feet(g.H / 72)} tall.` : '';
   const z = $('zoom');
   if (document.activeElement !== z) z.value = Math.round(1000 * Math.log(state.zoom) / Math.log(g.maxZoom));
   const big = Math.max(g.mapW, g.mapH) > 14400;
@@ -1810,6 +1823,7 @@ for (const id of ['wFt', 'wIn', 'hFt', 'hIn']) {
 }
 document.querySelectorAll('input[name=paper]').forEach(r => r.addEventListener('change', () => { state.paper = r.value; schedule(); }));
 $('orient').addEventListener('change', e => { state.orient = e.target.value; schedule(); });
+$('oWhole').addEventListener('change', e => { state.whole = e.target.checked; schedule(); });
 const CHECKS = [['oBorder', 'border'], ['oStreets', 'labStreets'], ['oPlaces', 'labPlaces'], ['oTerrain', 'terrain'], ['oCompass', 'compass'], ['oRings', 'rings'], ['oGrid', 'grid'],
   ['oTrees', 'trees'], ['oWaves', 'waves'], ['oShadows', 'shadows'], ['oLandmarks', 'landmarks'], ['oShore', 'shore'], ['oHach', 'hachure'], ['oOrnate', 'ornate']];
 for (const [id, key] of CHECKS) {
@@ -3060,7 +3074,7 @@ async function buildPdf(mode) {
     const total = cols * rows;
     const advTxt = `up to ${f2(g.advX / 72)} x ${f2(g.advY / 72)} in`;
     const lines = [
-      `Finished size ${feet(state.wallW)} wide x ${feet(state.wallH)} tall, including a 0.5 in white paper border all round.`,
+      `Finished size ${feet(g.W / 72)} wide x ${feet(g.H / 72)} tall, including a 0.5 in white paper border all round.`,
       `${total} pages: ${rows} rows (A at the top to ${rowName(rows - 1)}) x ${cols} columns (1 at the left to ${cols}). Paper ${f2(pw / 72)} x ${f2(ph / 72)} in.`,
       '',
       `1.  Print pages 2 to ${total + 1} at ACTUAL SIZE / 100% (turn off "Fit to page" / "Shrink oversized pages").`,
@@ -3151,7 +3165,7 @@ function saveBlob(blob, name) {
 }
 const setBusy = v => { busy = v; for (const id of ['dlPages', 'dlSheet', 'dlPng', 'dlTest']) $(id).disabled = v; };
 const fileStem = () => {
-  const size = `${feet(state.wallW)} x ${feet(state.wallH)}`.replace(/ /g, '');
+  const g = layout(), size = `${feet(g.W / 72)} x ${feet(g.H / 72)}`.replace(/ /g, '');
   return `Louisville-map-${size}${state.theme === 'classic' ? '' : '-' + state.theme}${state.draw === 'clean' ? '' : '-' + state.draw}${state.detail === 'full' ? '' : '-simplified'}`;
 };
 async function download(mode) {
@@ -3247,6 +3261,7 @@ function encodeState() {
   const kv = [['w', +state.wallW.toFixed(2)], ['h', +state.wallH.toFixed(2)], ['p', state.paper], ['o', ORIENT_CODE[state.orient]], ['s', state.theme],
     ['f', FLAGS.map(k => +state[k]).join('')], ['x', TOUCHES.map(k => +state[k]).join('')],
     ['z', +state.zoom.toFixed(3)], ['c', `${+state.cx.toFixed(1)},${+state.cy.toFixed(1)}`]];
+  if (state.whole) kv.push(['ws', 1]);
   if (state.title) kv.push(['t', state.title]);
   if (state.subtitle) kv.push(['u', state.subtitle]);
   if (state.tpos !== 'br') kv.push(['tp', state.tpos]);
@@ -3275,6 +3290,7 @@ function applyHash(hash) {
   if (q.p in PAPERS) state.paper = q.p;
   const o = Object.keys(ORIENT_CODE).find(k => ORIENT_CODE[k] === q.o);
   if (o) state.orient = o;
+  state.whole = q.ws === '1';
   if (Object.prototype.hasOwnProperty.call(THEMES, q.s)) state.theme = q.s;
   state.draw = DRAW_KEYS.includes(q.dr) ? q.dr : 'clean';
   state.detail = DETAIL_KEYS.includes(q.dl) ? q.dl : 'full';
@@ -3312,6 +3328,7 @@ function syncUI() {
   normWall();
   document.querySelectorAll('input[name=paper]').forEach(r => { r.checked = r.value === state.paper; });
   $('orient').value = state.orient;
+  $('oWhole').checked = state.whole;
   for (const [id, key] of CHECKS) $(id).checked = state[key];
   syncTheme();
   document.querySelectorAll('input[name=draw]').forEach(r => { r.checked = r.value === state.draw; });
