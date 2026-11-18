@@ -77,11 +77,31 @@ const shade = (hex, f) => '#' + [1, 3, 5].map(i => {
   return Math.round(clamp(f < 0 ? v * (1 + f) : v + (255 - v) * f, 0, 255)).toString(16).padStart(2, '0');
 }).join('');
 
+/* "Your own colors": six picks spread over every layer, with tints so parks, woods and grass stay distinct */
+let customCache = null;
+function customCols() {
+  if (!state.custom) return null;
+  const c = state.colors, key = JSON.stringify(c);
+  if (customCache && customCache.key === key) return customCache.map;
+  const mx = mixHex, m = {
+    water: c.water, canal: c.water, river: c.water, stream: shade(c.water, -.2), ditch: shade(c.water, -.2),
+    park: c.green, wood: shade(c.green, -.18), golf: mx(c.land, c.green, .8), cemetery: mx(c.land, c.green, .6), grass: mx(c.land, c.green, .42),
+    pitch: shade(c.green, -.08), wetland: mx(c.water, c.green, .5),
+    residential: c.road, link: c.road, tertiary: c.road, secondary: c.road, primary: c.road, trunk: c.road,
+    service: mx(c.land, c.road, .55), trail: mx(c.land, c.road, .45), rail: c.road, railminor: mx(c.land, c.road, .7), rail_tie: c.land,
+    motorway: c.hwy, mlink: c.hwy, motorway_case: c.land, mlink_case: c.land,
+    building: c.bldg, aerodrome: mx(c.land, c.road, .05), apron: mx(c.land, c.road, .1), taxiway: mx(c.land, c.road, .28), runway: mx(c.land, c.road, .55),
+  };
+  customCache = { key, map: m };
+  return m;
+}
+const styleCol = (T, n) => { const cc = customCols(); return (cc && cc[n]) || (T.colors && T.colors[n]) || BASEHEX[n]; };
+
 /* drawing passes for the current style + optional illustrated touches */
 function passes() {
   if (isArt()) return passesArt();
   const T = THEMES[state.theme], out = [];
-  const col = n => (T.colors && T.colors[n]) || BASEHEX[n];
+  const col = n => styleCol(T, n);
   const wm = n => (T.widths && T.widths[n]) || 1;
   for (const L of LAYERS) {
     const n = L.name;
@@ -95,17 +115,21 @@ function passes() {
     if (L.kind === 'fill') {
       if (n === 'building' && state.shadows) out.push({ src: L.src, kind: 'shadow', hex: shade(col(n), -.42) });
       out.push({ src: L.src, kind: 'fill', hex: col(n), outline: n === 'building' && state.shadows ? shade(col(n), -.5) : null });
-      if (n === 'wood' && state.trees) out.push({ src: L.src, kind: 'pattern', pat: { id: 'PT', type: 'trees', T: 40, c1: shade(col(n), -.22), c2: shade(col(n), .25) } });
-      if (n === 'water' && state.waves) out.push({ src: L.src, kind: 'pattern', pat: { id: 'PW', type: 'waves', T: 44, c1: state.theme === 'blueprint' ? shade(col(n), .3) : shade(col(n), .55) } });
+      if ((n === 'wood' || n === 'park') && state.trees) out.push({ src: L.src, kind: 'pattern', pat: treePat(n, col(n)) });
+      if (n === 'water' && state.waves) out.push({ src: L.src, kind: 'pattern', pat: wavePat(col(n)) });
       if (n === 'water' && state.shore) out.push({ kind: 'shore' });
     } else out.push({ src: L.src, kind: 'line', hex: col(n), width: L.width * wm(n), butt: L.butt, dash: L.dash });
   }
   return out;
 }
+/* the illustrated touches: tree and ripple patterns, drawn big enough to read on the wall (sz scales the 40-unit tile) */
+const treePat = (n, c) => ({ id: n === 'park' ? 'PTp' : 'PT', type: 'trees', T: 40, sz: n === 'park' ? 2.6 : 2.2, sparse: n === 'park',
+  c1: shade(c, lumOf(c) > .35 ? -.42 : .35), c2: shade(c, lumOf(c) > .35 ? .3 : .55) });
+const wavePat = c => ({ id: 'PW', type: 'waves', T: 44, sz: 2.2, c1: lumOf(c) < .3 ? shade(c, .45) : shade(c, -.32) });
 /* line widths grow more slowly than the map when zooming out, and approach true road width zooming in */
 const widthScale = k => k < 1 ? Math.pow(k, -.35) : 1 + .5 * (1 - Math.pow(k, -.6));
-const shadowOff = k => clamp(.6 * Math.pow(k, .75), .6, 6);   // output points
-const patScale = g => clamp(g.o * 1.5, .55, 1.1);
+const shadowOff = k => clamp(1.8 * Math.pow(k, .6), 1.5, 9);   // output points
+const patScale = (g, pat) => clamp(g.o * 1.5, .55, 1.1) * ((pat && pat.sz) || 1);
 
 /* ------------------------------------------------------------ drawing techniques and detail levels
    Everything here is optional: with Drawing = Clean and Detail = Full none of it runs and the output is the original.
@@ -122,9 +146,9 @@ const SIMPLE_BLDG_PT = 1.6, BLOCK_BLDG_PT = 2.6;      // smallest building (boun
 const ROAD_DBL = new Set(['residential', 'link', 'tertiary', 'secondary', 'primary', 'trunk', 'mlink', 'motorway']);
 const XF = {
   clean: {},
-  ink: { a1: 1.7, w1: 150, a2: .4, w2: 14, eps: .1, ds: 4.5, aref: 6 },
-  pencil: { a1: 1.3, w1: 130, a2: .4, w2: 10, eps: .1, ds: 3.4, aref: 6 },
-  block: { a1: .5, w1: 5, a2: .24, w2: 1.9, eps: .15, ds: .95, aref: 5 },
+  ink: { a1: 3.4, w1: 120, a2: .9, w2: 12, eps: .1, ds: 3.5, aref: 6 },
+  pencil: { a1: 2.6, w1: 110, a2: .8, w2: 9, eps: .1, ds: 3, aref: 6 },
+  block: { a1: .9, w1: 6, a2: .45, w2: 2.2, eps: .15, ds: .95, aref: 5 },
 };
 const BLOCK_WMIN = { residential: .85, link: 1, tertiary: 1.2, secondary: 1.5, primary: 1.9, trunk: 2.3, mlink: 1.5, mlink_case: 2.3, motorway: 2.8, motorway_case: 4,
   rail: 1.1, rail_tie: .7, stream: .7, canal: 1.5, river: 2.4, runway: 3 };
@@ -139,7 +163,7 @@ function pencilGrey(hex, strength) {
   const dark = lumOf(THEMES[state.theme].land) < .4, l = lumOf(hex);
   return greyHex(1 - (1 - (dark ? 1 - l : l)) * strength);
 }
-const landOf = () => (state.draw === 'pencil' ? pencilGrey(THEMES[state.theme].land, .35) : THEMES[state.theme].land);
+const landOf = () => { const l = state.custom ? state.colors.land : THEMES[state.theme].land; return state.draw === 'pencil' ? pencilGrey(l, .35) : l; };
 /* overlay colours (compass, border, rings, labels): the style's own, or graphite greys for the pencil sketch */
 function ovPalFor(opt) {
   const T = THEMES[opt.theme];
@@ -150,7 +174,7 @@ function ovPalFor(opt) {
   return o;
 }
 function blockCol(T, n) {
-  const g = nm => (T.colors && T.colors[nm]) || BASEHEX[nm];
+  const g = nm => styleCol(T, nm);
   if (n === 'water' || n === 'canal' || n === 'river' || n === 'stream') return g('water');
   if (GREENS.includes(n)) return g('wood');
   if (n === 'rail_tie' || n.endsWith('_case')) return T.land;
@@ -163,7 +187,7 @@ function blockCol(T, n) {
 function passesArt() {
   const T = THEMES[state.theme], draw = state.draw, simple = state.detail === 'simple', out = [];
   const pencil = draw === 'pencil', block = draw === 'block', ink = draw === 'ink';
-  const base = n => (T.colors && T.colors[n]) || BASEHEX[n];
+  const base = n => styleCol(T, n);
   const wm = n => (T.widths && T.widths[n]) || 1;
   const fillCol = n => (pencil ? pencilGrey(base(n), .5) : block ? blockCol(T, n) : base(n));
   const lineCol = n => (pencil ? pencilGrey(base(n), .85) : block ? blockCol(T, n) : base(n));
@@ -195,13 +219,13 @@ function passesArt() {
         push({ src: L.src, kind: 'pattern', pat: { id: 'H' + n, type: 'hatch', T: 96, ang: h.ang, n: h.n, c1: pencilGrey(base(n), n === 'water' ? 1.15 : 1.6), lw: n === 'building' ? .3 : n === 'water' ? .32 : .42, seed: 7 + n.length * 13 },
           xf: mk(3, true, n === 'building' ? { minPt: 3.5 } : {}) });
       }
-      if (n === 'wood' && state.trees) push({ src: L.src, kind: 'pattern', pat: { id: 'PT', type: 'trees', T: 40, c1: shade(col, -.22), c2: shade(col, .25) }, xf });
-      if (n === 'water' && state.waves) push({ src: L.src, kind: 'pattern', pat: { id: 'PW', type: 'waves', T: 44, c1: state.theme === 'blueprint' ? shade(col, .3) : shade(col, .55) }, xf });
+      if ((n === 'wood' || n === 'park') && state.trees) push({ src: L.src, kind: 'pattern', pat: treePat(n, col), xf });
+      if (n === 'water' && state.waves) push({ src: L.src, kind: 'pattern', pat: wavePat(col), xf });
       if (n === 'water' && state.shore) push({ kind: 'shore', xf });
     } else {
       const hex = lineCol(n), width = L.width * wm(n);
       const wmin = block ? (BLOCK_WMIN[n] || .7) : ink ? .15 : .12;
-      if (block) push({ src: L.src, kind: 'line', hex, width, butt: L.butt, dash: L.dash, wmul: 1.25, wmin, xf: mk(11, false) });
+      if (block) push({ src: L.src, kind: 'line', hex, width, butt: L.butt, dash: L.dash, wmul: 1.7, wmin: wmin * 1.4, xf: mk(11, false) });
       else if (ROAD_DBL.has(n) && (ink || pencil)) {
         const wmul = pencil ? .62 : .78;
         push({ src: L.src, kind: 'line', hex, width, butt: 0, dash: 0, wmul, wmin, xf: mk(11, false) });
@@ -430,15 +454,15 @@ function detailFilter(g) {
 
 function drawPatternTile(ctx, pat) {
   if (pat.type === 'trees') {
-    for (const [x, y] of [[8, 10], [27, 7], [18, 24], [34, 28], [6, 33]]) {
-      ctx.fillStyle = pat.c1; ctx.beginPath(); ctx.rect(x - .45, y + 2, .9, 3); ctx.fill();
-      circ(ctx, x, y, 3.3); ctx.fill();
-      ctx.fillStyle = pat.c2; circ(ctx, x - .9, y - 1, 1.3); ctx.fill();
+    for (const [x, y] of pat.sparse ? [[10, 12], [30, 30]] : [[8, 10], [27, 7], [18, 24], [34, 28], [6, 33]]) {
+      ctx.fillStyle = pat.c1; ctx.beginPath(); ctx.rect(x - .6, y + 2, 1.2, 3.6); ctx.fill();
+      circ(ctx, x, y, 3.6); ctx.fill();
+      ctx.fillStyle = pat.c2; circ(ctx, x - 1, y - 1.1, 1.4); ctx.fill();
     }
   } else if (pat.type === 'hatch') {
     drawHatch(ctx, pat);
   } else {
-    ctx.strokeStyle = pat.c1; ctx.lineWidth = .8; ctx.lineCap = 'round';
+    ctx.strokeStyle = pat.c1; ctx.lineWidth = 1.1; ctx.lineCap = 'round';
     for (const [x, y] of [[6, 12], [26, 32]]) {
       ctx.beginPath(); ctx.moveTo(x, y);
       ctx.bezierCurveTo(x + 2, y - 2.4, x + 4, y - 2.4, x + 6, y);
@@ -519,6 +543,10 @@ const state = {
   lettering: 'plain',                           // type for names and the title: 'plain' | 'hand' | 'antique'
   landmarks: false,                             // small drawings of well-known places
   shore: false, hachure: false, ornate: false,  // old-chart details: shore lines in the water, hachured hills, ornate compass and ribbon title
+  custom: false,                                // your own colors (state.colors) instead of the style's
+  colors: { land: '#ffffff', water: '#8fc3d8', green: '#9cc58a', road: '#1b2733', hwy: '#a8232c', bldg: '#bdb1a2' },
+  shape: 'rect',                                // map shape: 'rect' | 'round' | 'circle' | 'oval' | 'heart'
+  path: false,                                  // dotted path joining the markers in order
 };
 
 /* ------------------------------------------------------------ layout */
@@ -859,11 +887,82 @@ const RIVER = (() => {
   return p;
 })();
 const waterFill = () => {
-  const T = THEMES[state.theme], b = (T.colors && T.colors.water) || BASEHEX.water;
+  const b = styleCol(THEMES[state.theme], 'water');
   return state.draw === 'pencil' ? pencilGrey(b, .5) : b;
 };
 /* a darker (or, on dark water, lighter) tone of the water for lettering and fine lines */
 const waterInk = (hex, f) => (lumOf(hex) > .3 ? shade(hex, -f) : shade(hex, f));
+
+/* a marker: its symbol (s = size in output points, c = its own colour or '' for the style's accent) and its optional label */
+function drawMarkerFull(ctx, mk, x, y, s, pal, part) {
+  const fill = mk.c || pal.accent, t = mk.t;
+  if (part === 'label') { /* label only, below */ }
+  else if (t === 'dot') {
+    ctx.save(); ctx.fillStyle = fill; ctx.strokeStyle = pal.paper; ctx.lineWidth = s * .08;
+    circ(ctx, x, y, s * .3); ctx.fill(); ctx.stroke(); ctx.restore();
+  } else if (t === 'flag') {
+    ctx.save(); ctx.translate(x, y); ctx.scale(s, s); ctx.lineJoin = 'round';
+    ctx.strokeStyle = pal.ink; ctx.lineWidth = .06; ctx.beginPath(); ctx.moveTo(-.22, .5); ctx.lineTo(-.22, -.5); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-.2, -.48); ctx.bezierCurveTo(.02, -.56, .14, -.36, .42, -.42); ctx.lineTo(.42, -.06);
+    ctx.bezierCurveTo(.14, -.0, .02, -.2, -.2, -.12); ctx.closePath();
+    ctx.fillStyle = fill; ctx.fill(); ctx.lineWidth = .04; ctx.strokeStyle = pal.paper; ctx.stroke();
+    ctx.restore();
+  } else if (t !== 'text') {
+    const p2 = Object.assign({}, pal, { accent: fill });
+    drawMarker(ctx, t, x, y, s, p2);
+  }
+  const lab = cleanLabel(mk.l);
+  if (!lab || part === 'symbol') return;
+  const LT = activeLetter(), fs = t === 'text' ? s * .42 : Math.max(s * .3, 7);
+  ctx.save();
+  ctx.font = LT ? letterFont(LT, fs) : `bold ${f5(fs)}px ${SERIF}`;
+  if (LT) ctx.fontKerning = 'none';
+  ctx.textAlign = 'center';
+  const ty = t === 'text' ? y + fs * .35 : y + s * (t === 'pin' ? .1 : .58) + fs * .82;
+  ctx.lineJoin = 'round'; ctx.strokeStyle = pal.paper; ctx.lineWidth = fs * .28; ctx.strokeText(lab, x, ty);
+  ctx.fillStyle = t === 'text' && mk.c ? mk.c : pal.ink; ctx.fillText(lab, x, ty);
+  ctx.restore();
+}
+const cleanLabel = l => String(l || '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 40);
+/* dotted path through the markers in order, each leg a gentle arc */
+function drawPath(ctx, pts, w, col) {
+  ctx.save();
+  ctx.strokeStyle = col; ctx.lineWidth = w; ctx.lineCap = 'round'; ctx.setLineDash([.01, w * 2.6]);
+  ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) {
+    const [ax, ay] = pts[i - 1], [bx, by] = pts[i], dx = bx - ax, dy = by - ay, b = .18;
+    const cx = (ax + bx) / 2 - dy * b, cy = (ay + by) / 2 + dx * b;
+    ctx.bezierCurveTo(ax + (cx - ax) * 2 / 3, ay + (cy - ay) * 2 / 3, bx + (cx - bx) * 2 / 3, by + (cy - by) * 2 / 3, bx, by);
+  }
+  ctx.stroke(); ctx.setLineDash([]); ctx.restore();
+}
+/* the outline of the map's shape (inside the map area), as a fresh subpath */
+function shapePath(ctx, shape, W, H, o) {
+  const m = 30 * o, x0 = m, y0 = m, w = W - 2 * m, h = H - 2 * m, K = .5522847498;
+  const ell = (cx, cy, rx, ry) => {
+    ctx.moveTo(cx + rx, cy);
+    ctx.bezierCurveTo(cx + rx, cy + ry * K, cx + rx * K, cy + ry, cx, cy + ry);
+    ctx.bezierCurveTo(cx - rx * K, cy + ry, cx - rx, cy + ry * K, cx - rx, cy);
+    ctx.bezierCurveTo(cx - rx, cy - ry * K, cx - rx * K, cy - ry, cx, cy - ry);
+    ctx.bezierCurveTo(cx + rx * K, cy - ry, cx + rx, cy - ry * K, cx + rx, cy);
+    ctx.closePath();
+  };
+  if (shape === 'circle') { const r = Math.min(w, h) / 2; ell(W / 2, H / 2, r, r); }
+  else if (shape === 'oval') ell(W / 2, H / 2, w / 2, h / 2);
+  else if (shape === 'round') {
+    const r = Math.min(w, h) * .12, c = r * (1 - K);
+    ctx.moveTo(x0 + r, y0); ctx.lineTo(x0 + w - r, y0); ctx.bezierCurveTo(x0 + w - c, y0, x0 + w, y0 + c, x0 + w, y0 + r);
+    ctx.lineTo(x0 + w, y0 + h - r); ctx.bezierCurveTo(x0 + w, y0 + h - c, x0 + w - c, y0 + h, x0 + w - r, y0 + h);
+    ctx.lineTo(x0 + r, y0 + h); ctx.bezierCurveTo(x0 + c, y0 + h, x0, y0 + h - c, x0, y0 + h - r);
+    ctx.lineTo(x0, y0 + r); ctx.bezierCurveTo(x0, y0 + c, x0 + c, y0, x0 + r, y0); ctx.closePath();
+  } else if (shape === 'heart') {
+    const sc = Math.min(w / 1.02, h / .98), cx = W / 2, cy = H / 2 + sc * .02;
+    const P = (a, b) => [cx + a * sc, cy + b * sc];
+    const mv = (a, b) => ctx.moveTo(...P(a, b)), bz = (a, b, c, d, e, f) => ctx.bezierCurveTo(...P(a, b), ...P(c, d), ...P(e, f));
+    mv(0, .47); bz(-.16, .33, -.51, .08, -.51, -.2); bz(-.51, -.47, -.15, -.52, 0, -.25); bz(.15, -.52, .51, -.47, .51, -.2); bz(.51, .08, .16, .33, 0, .47);
+    ctx.closePath();
+  } else ctx.rect(0, 0, W, H);
+}
 
 function drawMarker(ctx, t, x, y, s, pal) {
   ctx.save();
@@ -1394,13 +1493,28 @@ function drawOverlay(ctx, g, opt, mid) {
   if (opt.landmarks) drawLandmarks(ctx, g, pal);
   if (mid) mid(ctx);
 
-  const B = opt.border ? 108 * o : 0;
+  const shaped = opt.shape && opt.shape !== 'rect';
+  if (shaped) {                                    // plain paper outside the shape, and a double line along it
+    ctx.save();
+    ctx.beginPath(); ctx.rect(-4, -4, mapW + 8, mapH + 8); shapePath(ctx, opt.shape, mapW, mapH, o);
+    ctx.fillStyle = '#FFFFFF'; ctx.fill('evenodd');
+    ctx.beginPath(); shapePath(ctx, opt.shape, mapW, mapH, o);
+    ctx.lineJoin = 'round'; ctx.strokeStyle = ink; ctx.lineWidth = 5 * o; ctx.stroke();
+    ctx.restore();
+  }
+  const B = opt.border && !shaped ? 108 * o : 0;
   if (opt.markers && opt.markers.length) {
-    const ms = 72 * o;
-    for (const mk of opt.markers) {
-      const sx = fx(mk.x), sy = fy(mk.y);
-      if (sx < -ms || sx > mapW + ms || sy < -ms || sy > mapH + ms) continue;
-      drawMarker(ctx, mk.t, sx, sy, ms, pal);
+    const msz = mk => clamp(+mk.s || 1.5, .25, 24) * 72;
+    if (opt.path && opt.markers.length > 1) {
+      const avg = opt.markers.reduce((a, mk) => a + msz(mk), 0) / opt.markers.length;
+      drawPath(ctx, opt.markers.map(mk => [fx(mk.x), fy(mk.y)]), clamp(avg * .07, 2, 14), pal.accent);
+    }
+    for (const part of ['symbol', 'label']) {            // all symbols first, so no symbol covers another marker's label
+      for (const mk of opt.markers) {
+        const ms = msz(mk), sx = fx(mk.x), sy = fy(mk.y);
+        if (sx < -ms * 3 || sx > mapW + ms * 3 || sy < -ms || sy > mapH + ms * 2) continue;
+        drawMarkerFull(ctx, mk, sx, sy, ms, pal, part);
+      }
     }
   }
   if (opt.compass) {
@@ -1408,7 +1522,7 @@ function drawOverlay(ctx, g, opt, mid) {
     (opt.ornate ? compassOrnate : compass)(ctx, B + r * 1.6, mapH - B - r * 1.52, r, pal);
   }
 
-  if (opt.border) {
+  if (opt.border && !shaped) {
     ctx.save();
     ctx.lineCap = 'butt';
     ctx.fillStyle = white;
@@ -1476,7 +1590,7 @@ function themeImg() {
 
 /* sharp close-up: when the view covers only a few data tiles, draw the real vector data */
 let vcan = null, vinfo = null, vtimer = 0, vrun = 0;
-const styleSig = () => [state.theme, state.trees, state.waves, state.shadows, state.draw, state.detail, state.shore, state.hachure].join();
+const styleSig = () => [state.theme, state.trees, state.waves, state.shadows, state.draw, state.detail, state.shore, state.hachure, state.custom && JSON.stringify(state.colors)].join();
 function vectorKeys(g) {
   const keys = cellKeys(g.x0, g.y0, g.x0 + g.vw, g.y0 + g.vh);
   return keys.length <= 12 ? keys : null;
@@ -1543,7 +1657,7 @@ async function paintVector(can, g, keys, ppp, cancel, onPass) {
       ctx.save();
       ctx.clip(path, 'nonzero');
       ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.fillStyle = canvasPattern(ctx, p.pat, p.pat.T * patScale(g) * ppp);
+      ctx.fillStyle = canvasPattern(ctx, p.pat, p.pat.T * patScale(g, p.pat) * ppp);
       ctx.fillRect(0, 0, can.width, can.height);
       ctx.restore();
     } else {
@@ -1655,7 +1769,8 @@ function liveOverview() {
 
 /* draw the map area (no paper margin) at d px per point with its top-left at the origin */
 function paintMap(ctx, g, d, lab) {
-  const img = themeImg();
+  let img = themeImg();
+  if (state.custom && !LIVE && img.ready) img = recolorImg(img);
   const s = (img.ready && img.naturalWidth ? img.naturalWidth : M.img) / M.size;      // previews may differ in size from one style to the next
   ctx.imageSmoothingQuality = 'high';
   ctx.fillStyle = img.ready ? landOf() : '#f3f1ec';
@@ -1710,6 +1825,7 @@ function render() {
     ctx.fillText(LIVE ? liveStatus : 'Loading map...', cw / 2, ch / 2);
   }
   queueLabels(g);
+  queueLoupe();
   summary(g);
   lastDpr = dpr;
   queueInk();
@@ -1736,7 +1852,6 @@ function summary(g) {
   const big = Math.max(g.mapW, g.mapH) > 14400;
   $('dlSheet').disabled = busy || big;
   $('dlSheet').title = big ? 'A single PDF sheet is limited to 200 in (16 ft 8 in).' : '';
-  $('styleHint').hidden = !(isArt() && !vectorKeys(g));
   $('dlPng').disabled = busy;
   $('dlTest').disabled = busy;
   const poster = POSTERS.some(p => Math.abs(p[0] - state.wallW) < .01 && Math.abs(p[1] - state.wallH) < .01);
@@ -1853,7 +1968,7 @@ $('oWhole').addEventListener('change', e => { state.whole = e.target.checked; sc
 const CHECKS = [['oBorder', 'border'], ['oStreets', 'labStreets'], ['oPlaces', 'labPlaces'], ['oTerrain', 'terrain'], ['oCompass', 'compass'], ['oRings', 'rings'], ['oGrid', 'grid'],
   ['oTrees', 'trees'], ['oWaves', 'waves'], ['oShadows', 'shadows'], ['oLandmarks', 'landmarks'], ['oShore', 'shore'], ['oHach', 'hachure'], ['oOrnate', 'ornate']];
 for (const [id, key] of CHECKS) {
-  $(id).addEventListener('change', e => { state[key] = e.target.checked; schedule(); });
+  $(id).addEventListener('change', e => { state[key] = e.target.checked; schedule(); if (['trees', 'waves', 'shadows'].includes(key) && e.target.checked) styleTouched(); });
 }
 $('oLandmarks').addEventListener('change', () => { if (state.landmarks) loadLandmarks().catch(err => layerMsg(err.message)); });
 for (const id of ['oShore', 'oHach']) $(id).addEventListener('change', () => { layerMsg(''); });
@@ -1874,7 +1989,7 @@ for (const [key, T] of Object.entries(THEMES)) {
   themeBox.appendChild(b);
 }
 for (const [name, key] of [['draw', 'draw'], ['detail', 'detail']]) {
-  document.querySelectorAll(`input[name=${name}]`).forEach(r => r.addEventListener('change', () => { if (r.checked) { state[key] = r.value; schedule(); } }));
+  document.querySelectorAll(`input[name=${name}]`).forEach(r => r.addEventListener('change', () => { if (r.checked) { state[key] = r.value; schedule(); styleTouched(); } }));
 }
 function syncTheme() { themeBox.querySelectorAll('.theme').forEach(x => x.setAttribute('aria-pressed', x.dataset.theme === state.theme)); }
 const placeSel = $('place');
@@ -1949,7 +2064,7 @@ $('tSub').addEventListener('input', e => { state.subtitle = cleanText(e.target.v
 $('tPos').addEventListener('change', e => { state.tpos = e.target.value; schedule(); });
 
 /* ---- personal markers */
-const MARK_NAMES = { heart: 'Heart', star: 'Star', house: 'House', pin: 'Pin' };
+const MARK_NAMES = { heart: 'Heart', star: 'Star', house: 'House', pin: 'Pin', flag: 'Flag', dot: 'Dot', text: 'Note' };
 const MAXMARK = 100;
 let placing = null;
 function setPlacing(t) {
@@ -1957,7 +2072,7 @@ function setPlacing(t) {
   document.querySelectorAll('[data-mark]').forEach(b => b.setAttribute('aria-pressed', b.dataset.mark === t));
   canvas.classList.toggle('place', !!t);
   $('mHint').textContent = t ? `Click the map where the ${MARK_NAMES[t].toLowerCase()} should go. Click its button again to cancel.` :
-    'Choose a symbol, then click the map to drop it there. Markers stay on their spot when you move or zoom the map.';
+    'Choose a symbol, then click the map to drop it there. Markers stay on their spot when you move or zoom the map, and print at the size you set.';
 }
 document.querySelectorAll('[data-mark]').forEach(b => b.addEventListener('click', () => setPlacing(placing === b.dataset.mark ? null : b.dataset.mark)));
 function placeMarker(e) {
@@ -1965,25 +2080,153 @@ function placeMarker(e) {
   const mx = (e.clientX - r.left) / disp - g.mx, my = (e.clientY - r.top) / disp - g.my;
   if (mx < 0 || my < 0 || mx > g.mapW || my > g.mapH) return;
   if (state.markers.length >= MAXMARK) { $('mHint').textContent = `That is the most markers (${MAXMARK}). Remove one to add another.`; setPlacing(null); return; }
-  state.markers.push({ t: placing, x: clamp(g.x0 + mx / g.k, 0, M.size), y: clamp(g.y0 + (g.mapH - my) / g.k, 0, M.size) });
+  const t = placing;
+  state.markers.push({ t, x: clamp(g.x0 + mx / g.k, 0, M.size), y: clamp(g.y0 + (g.mapH - my) / g.k, 0, M.size), s: +$('mSize').value || 2, c: '', l: t === 'text' ? 'Your words here' : '' });
   setPlacing(null);
   renderMarkerList();
   schedule();
+  if (t === 'text') { const inp = $('mList').querySelector('li:last-child input[type=text]'); if (inp) { inp.focus(); inp.select(); } }
 }
+const sizeTxt = v => (+v % 1 ? (+v).toFixed(2).replace(/0$/, '') : +v) + ' in';
+$('mSize').addEventListener('input', e => { $('mSizeVal').textContent = sizeTxt(e.target.value); });
+$('oPath').addEventListener('change', e => { state.path = e.target.checked; schedule(); });
 function renderMarkerList() {
   const ul = $('mList'), cnt = {};
   ul.textContent = '';
+  const pal = ovPalFor(state);
   state.markers.forEach((m, i) => {
     cnt[m.t] = (cnt[m.t] || 0) + 1;
-    const li = document.createElement('li'), sp = document.createElement('span'), b = document.createElement('button');
-    sp.textContent = `${MARK_NAMES[m.t]} ${cnt[m.t]}`;
-    b.type = 'button'; b.textContent = 'Remove'; b.setAttribute('aria-label', `Remove ${sp.textContent}`);
+    const name = `${MARK_NAMES[m.t]} ${cnt[m.t]}`;
+    const li = document.createElement('li'), sp = document.createElement('b'), b = document.createElement('button');
+    li.className = 'mk';
+    sp.textContent = name;
+    const col = document.createElement('input');
+    col.type = 'color'; col.value = /^#[0-9a-f]{6}$/i.test(m.c) ? m.c : (/^#[0-9a-f]{6}$/i.test(pal.accent) ? pal.accent : '#a8232c');
+    col.setAttribute('aria-label', `Color of ${name}`);
+    col.addEventListener('input', () => { m.c = col.value; schedule(); });
+    b.type = 'button'; b.textContent = 'Remove'; b.setAttribute('aria-label', `Remove ${name}`);
     b.addEventListener('click', () => { state.markers.splice(i, 1); renderMarkerList(); schedule(); });
-    li.append(sp, b); ul.appendChild(li);
+    const sz = document.createElement('label'), rng = document.createElement('input'), out = document.createElement('output');
+    sz.className = 'msz'; sz.textContent = 'Size';
+    rng.type = 'range'; rng.min = .5; rng.max = 12; rng.step = .25; rng.value = m.s;
+    out.textContent = sizeTxt(m.s);
+    rng.addEventListener('input', () => { m.s = +rng.value; out.textContent = sizeTxt(m.s); schedule(); });
+    sz.append(rng, out);
+    const lab = document.createElement('input');
+    lab.type = 'text'; lab.maxLength = 40; lab.value = m.l || ''; lab.placeholder = m.t === 'text' ? 'Your words' : 'Label (optional), e.g. Where we met';
+    lab.setAttribute('aria-label', `Label for ${name}`);
+    lab.addEventListener('input', () => { m.l = lab.value; schedule(); });
+    li.append(sp, col, b, sz, lab); ul.appendChild(li);
   });
   $('mClear').hidden = !state.markers.length;
 }
 $('mClear').addEventListener('click', () => { state.markers = []; renderMarkerList(); schedule(); });
+
+/* ---- your own colors and the map shape */
+const COLOR_IDS = { land: 'cLand', water: 'cWater', green: 'cGreen', road: 'cRoad', hwy: 'cHwy', bldg: 'cBldg' };
+const hex6 = h => (/^#[0-9a-f]{6}$/i.test(h) ? h.toLowerCase() : null);
+function syncColors() {
+  $('oCustom').checked = state.custom;
+  for (const [k, id] of Object.entries(COLOR_IDS)) $(id).value = state.colors[k];
+  $('colorBox').classList.toggle('off', !state.custom);
+}
+/* start from the current style's colours, so turning it on changes nothing until a colour is picked */
+function seedColors() {
+  const T = THEMES[state.theme], c = n => hex6((T.colors && T.colors[n]) || BASEHEX[n]) || '#888888';
+  Object.assign(state.colors, { land: hex6(T.land) || '#ffffff', water: c('water'), green: c('park'), road: c('primary'), hwy: c('motorway'), bldg: c('building') });
+}
+$('oCustom').addEventListener('change', e => {
+  if (e.target.checked && !state.custom) seedColors();
+  state.custom = e.target.checked; syncColors(); renderMarkerList(); schedule(); styleTouched();
+});
+for (const [k, id] of Object.entries(COLOR_IDS)) {
+  $(id).addEventListener('input', e => {
+    state.colors[k] = hex6(e.target.value) || state.colors[k];
+    if (!state.custom) { state.custom = true; syncColors(); }
+    schedule(); styleTouched();
+  });
+}
+$('mShape').addEventListener('change', e => { state.shape = e.target.value; schedule(); });
+syncColors();
+
+/* Louisville's zoomed-out preview is a ready-made picture per style; with your own colours it is recoloured here: each
+   pixel close to one of the style's key colours is moved by the same amount towards the matching custom colour. */
+let recolorCache = null;
+function recolorImg(img) {
+  const sig = state.theme + JSON.stringify(state.colors);
+  if (recolorCache && recolorCache.sig === sig && recolorCache.src === img) return recolorCache.can;
+  const T = THEMES[state.theme], cc = customCols(), keysN = ['water', 'park', 'wood', 'grass', 'golf', 'cemetery', 'building', 'residential', 'primary', 'motorway', 'service'];
+  const toRgb = h => [1, 3, 5].map(i => parseInt(h.substr(i, 2), 16));
+  const pairs = [[toRgb(hex6(T.land) || '#ffffff'), toRgb(state.colors.land)]];
+  for (const n of keysN) { const a = hex6((T.colors && T.colors[n]) || BASEHEX[n]); if (a) pairs.push([toRgb(a), toRgb(cc[n])]); }
+  const W = Math.min(2400, img.naturalWidth), H = Math.round(W * img.naturalHeight / img.naturalWidth);
+  const can = document.createElement('canvas'); can.width = W; can.height = H;
+  const ctx = can.getContext('2d'); ctx.drawImage(img, 0, 0, W, H);
+  const id = ctx.getImageData(0, 0, W, H), d = id.data, tol = 64, tol2 = tol * tol;
+  for (let i = 0; i < d.length; i += 4) {
+    const r = d[i], g = d[i + 1], b = d[i + 2];
+    let best = tol2, bp = null;
+    for (const p of pairs) { const k = p[0], e = (r - k[0]) ** 2 + (g - k[1]) ** 2 + (b - k[2]) ** 2; if (e < best) { best = e; bp = p; } }
+    if (!bp) continue;
+    const w = 1 - Math.sqrt(best) / tol;
+    d[i] = r + (bp[1][0] - bp[0][0]) * w; d[i + 1] = g + (bp[1][1] - bp[0][1]) * w; d[i + 2] = b + (bp[1][2] - bp[0][2]) * w;
+  }
+  ctx.putImageData(id, 0, 0);
+  can.naturalWidth = W; can.naturalHeight = H; can.ready = true;
+  recolorCache = { sig, src: img, can };
+  return can;
+}
+
+/* ---- close-up at printed size: a small window over the stage that draws the real map data at 1:1 (one printed inch is one
+   inch on screen), with the drawing style, touches, markers and border exactly as they print. It follows the pointer. */
+const loupe = { on: false, closed: false, x: null, y: null, sig: '', run: 0, t: 0 };
+function showLoupe(on, byUser) {
+  loupe.on = on; if (byUser && !on) loupe.closed = true;
+  $('loupe').hidden = !on;
+  $('loupeBtn').textContent = on ? 'Hide the printed-size close-up' : 'Show a close-up at printed size';
+  if (on) queueLoupe(true);
+}
+/* changing the drawing, a touch or a colour opens the close-up once, since zoomed out those changes are too small to see */
+function styleTouched() { if (!loupe.on && !loupe.closed) showLoupe(true); }
+$('loupeBtn').addEventListener('click', () => showLoupe(!loupe.on, true));
+$('loupeClose').addEventListener('click', () => showLoupe(false, true));
+canvas.addEventListener('pointermove', e => {
+  if (!loupe.on || ptrs.size) return;
+  const g = geom(), r = canvas.getBoundingClientRect();
+  const mx = (e.clientX - r.left) / disp - g.mx, my = (e.clientY - r.top) / disp - g.my;
+  if (mx < 0 || my < 0 || mx > g.mapW || my > g.mapH) return;
+  loupe.x = g.x0 + mx / g.k; loupe.y = g.y0 + (g.mapH - my) / g.k;
+  queueLoupe();
+});
+function queueLoupe(now) { if (!loupe.on) return; clearTimeout(loupe.t); loupe.t = setTimeout(renderLoupe, now ? 0 : 160); }
+async function renderLoupe() {
+  if (!loupe.on || document.body.dataset.mode === 'poster') return;
+  const g = geom(), cssW = $('loupeCan').clientWidth || 300, dpr = Math.min(2, window.devicePixelRatio || 1);
+  const W = cssW * 72 / 96;                                        // output points shown: one printed inch per screen inch
+  let lx = loupe.x, ly = loupe.y;
+  if (lx === null || lx < g.x0 || lx > g.x0 + g.vw || ly < g.y0 || ly > g.y0 + g.vh) { lx = g.x0 + g.vw / 2; ly = g.y0 + g.vh / 2; }
+  const sig = [lx, ly, g.k, g.mapW, g.mapH, cssW, styleSig(), state.shape, state.path, JSON.stringify(state.markers), state.border, state.compass, state.rings, state.title, state.subtitle, state.tpos, state.ornate, state.lettering].join('|');
+  if (sig === loupe.sig) return;
+  const run = ++loupe.run;
+  const half = W / 2 / g.k;
+  const gL = Object.assign({}, g, { x0: lx - half, y0: ly - half, vw: 2 * half, vh: 2 * half, mapW: W, mapH: W });
+  const keys = cellKeys(gL.x0, gL.y0, gL.x0 + gL.vw, gL.y0 + gL.vh);
+  try { await loadCells(keys, () => {}); } catch (err) { return; }
+  if (run !== loupe.run) return;
+  const can = document.createElement('canvas');
+  can.width = can.height = Math.round(cssW * dpr);
+  const ppp = can.width / W;
+  if (!await paintVector(can, gL, keys, ppp, () => run !== loupe.run)) return;
+  const ctx = can.getContext('2d');
+  ctx.setTransform(ppp, 0, 0, ppp, -(gL.x0 - g.x0) * g.k * ppp, -(g.mapH - (gL.y0 + gL.vh - g.y0) * g.k) * ppp);
+  drawOverlay(ctx, g, state, null);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (run !== loupe.run) return;
+  const out = $('loupeCan');
+  out.width = can.width; out.height = can.height;
+  out.getContext('2d').drawImage(can, 0, 0);
+  loupe.sig = sig;
+}
 new ResizeObserver(schedule).observe(stage);
 
 /* ------------------------------------------------------------ vector tiles */
@@ -2901,7 +3144,7 @@ const tick = () => new Promise(r => setTimeout(r, 0));
 /* everything drawOverlay needs from the user's choices (the preview passes `state`, which has the same fields) */
 const overlayOpt = () => ({ border: state.border, compass: state.compass, rings: state.rings, theme: state.theme,
   title: state.title, subtitle: state.subtitle, tpos: state.tpos, markers: state.markers, hood: state.hood, draw: state.draw,
-  landmarks: state.landmarks, ornate: state.ornate, lettering: state.lettering });
+  landmarks: state.landmarks, ornate: state.ornate, lettering: state.lettering, shape: state.shape, path: state.path });
 
 /* Where tile (row r from the top, column c from the left) sits on its page, in PDF points (y up).
    Outside edges sit 0.5 in from the paper edge and are never trimmed: column 1 hugs the left, every other column
@@ -3053,8 +3296,8 @@ async function buildPdf(mode) {
     }
     let pr = '';
     if (pats.length && ox !== undefined) {
-      const ps = patScale(g);
       pr = ' /Pattern << ' + pats.map((pat, i) => {
+        const ps = patScale(g, pat);
         const id = doc.alloc();
         const pd = pat.type === 'hatch' ? 1.5 : 0;     // hatch lines overrun the tile a little so neighbouring tiles overlap and hide the join
         doc.obj(id, `/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [${-pd} ${-pd} ${pat.T + pd} ${pat.T + pd}] /XStep ${pat.T} /YStep ${pat.T} ` +
@@ -3312,7 +3555,10 @@ function encodeState() {
   if (state.detail !== 'full') kv.push(['dl', state.detail]);
   if (state.lettering !== 'plain') kv.push(['lt', state.lettering]);
   if (ART_FLAGS.some(k => state[k])) kv.push(['ar', ART_FLAGS.map(k => +state[k]).join('')]);
-  if (state.markers.length) kv.push(['m', state.markers.map(m => `${m.t}:${+m.x.toFixed(1)}:${+m.y.toFixed(1)}`).join('~')]);
+  if (state.markers.length) kv.push(['m', state.markers.map(m => `${m.t}:${+m.x.toFixed(1)}:${+m.y.toFixed(1)}:${+(+m.s).toFixed(2)}:${(m.c || '').replace('#', '')}:${encodeURIComponent(cleanLabel(m.l).replace(/~/g, '-'))}`).join('~')]);
+  if (state.path) kv.push(['pa', 1]);
+  if (state.shape !== 'rect') kv.push(['sh', state.shape]);
+  if (state.custom) kv.push(['cc', Object.values(state.colors).map(c => c.replace('#', '')).join('.')]);
   return '#' + kv.map(([k, v]) => k + '=' + enc1(v)).join('&');
 }
 /* read a hash into state; every value is validated and clamped, anything unusable is ignored */
@@ -3354,12 +3600,20 @@ function applyHash(hash) {
   if (state.hood && hoodMap.size && !hoodMap.has(state.hood)) state.hood = '';
   if (LIVE) { state.hood = ''; state.labStreets = state.labPlaces = state.terrain = state.landmarks = state.shore = state.hachure = false; }
   if (state.hood) loadHoods().catch(() => {});
+  state.path = q.pa === '1';
+  state.shape = ['round', 'circle', 'oval', 'heart'].includes(q.sh) ? q.sh : 'rect';
+  const cc = (q.cc || '').split('.');
+  state.custom = cc.length === 6 && cc.every(c => /^[0-9a-f]{6}$/i.test(c));
+  if (state.custom) Object.keys(state.colors).forEach((k, i) => { state.colors[k] = '#' + cc[i].toLowerCase(); });
   if (q.m) {
     const out = [];
     for (const part of q.m.split('~')) {
-      const [t, x, y] = part.split(':');
+      const [t, x, y, sz, c, l] = part.split(':');
       if (!(t in MARK_NAMES) || x === undefined || y === undefined || x === '' || y === '' || !Number.isFinite(+x) || !Number.isFinite(+y)) continue;
-      if (out.length < MAXMARK) out.push({ t, x: clamp(+x, 0, M.size), y: clamp(+y, 0, M.size) });
+      let label = '';
+      try { label = cleanLabel(decodeURIComponent(l || '')); } catch (e) { /* ignore */ }
+      if (out.length < MAXMARK) out.push({ t, x: clamp(+x, 0, M.size), y: clamp(+y, 0, M.size), s: Number.isFinite(+sz) && +sz > 0 ? clamp(+sz, .5, 12) : 1.5,
+        c: /^[0-9a-f]{6}$/i.test(c || '') ? '#' + c.toLowerCase() : '', l: label });
     }
     state.markers = out;
   }
@@ -3376,6 +3630,7 @@ function syncUI() {
   document.querySelectorAll('input[name=detail]').forEach(r => { r.checked = r.value === state.detail; });
   document.querySelectorAll('input[name=lettering]').forEach(r => { r.checked = r.value === state.lettering; });
   $('tTitle').value = state.title; $('tSub').value = state.subtitle; $('tPos').value = state.tpos;
+  $('oPath').checked = state.path; $('mShape').value = state.shape; syncColors();
   renderMarkerList();
   syncLayerUI();
 }

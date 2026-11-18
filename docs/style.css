@@ -122,9 +122,9 @@ button:disabled { opacity: .5; cursor: default; }
 .summary dt { color: var(--ink2); }
 .summary dd { margin: 0; font-weight: 600; text-align: right; }
 
-#progress { margin-top: 10px; height: 26px; border: 1px solid var(--line); border-radius: 6px; position: relative; overflow: hidden; background: #f4f1ea; }
-#bar { position: absolute; inset: 0 auto 0 0; width: 0; background: #e5cf9c; transition: width .15s; }
-#ptext { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 12.5px; font-weight: 600; }
+#progress, .progress { margin-top: 10px; height: 26px; border: 1px solid var(--line); border-radius: 6px; position: relative; overflow: hidden; background: #f4f1ea; }
+#bar, .bar { position: absolute; inset: 0 auto 0 0; width: 0; background: #e5cf9c; transition: width .15s; }
+#ptext, #pPtext { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 12.5px; font-weight: 600; }
 
 footer { padding-top: 12px; font-size: 12px; color: var(--ink2); }
 footer a { color: inherit; }
@@ -145,3 +145,37 @@ footer a { color: inherit; }
   header p { display: none; }
 }
 body.live .lou { display: none !important; }
+
+/* ---- map / poster switch */
+section.mode { padding-top: 12px; }
+.mode .seg label { padding: 9px 12px; }
+.mode .seg b { font-size: 16px; }
+body[data-mode=poster] .m-map { display: none !important; }
+body:not([data-mode=poster]) .m-poster { display: none !important; }
+body[data-mode=poster] #view, body:not([data-mode=poster]) #pview, body[data-mode=poster] #loupe { display: none !important; }
+#pview { background: #fff; box-shadow: 0 10px 34px rgba(27, 39, 51, .28), 0 1px 3px rgba(27, 39, 51, .3); display: block; touch-action: none; }
+.m-poster .btns select { max-width: none; width: 100%; }
+#pFile { width: 100%; font: inherit; font-size: 13.5px; }
+
+/* ---- custom colors, markers */
+.colors { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px 8px; margin-top: 8px; }
+.colors label { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.colors input[type=color] { width: 30px; height: 26px; padding: 0 2px; border: 1px solid #c9c3b6; border-radius: 5px; background: #fff; cursor: pointer; }
+.colors.off { opacity: .45; }
+button.wide { width: 100%; margin-top: 10px; }
+.marks { grid-template-columns: repeat(3, 1fr); }
+.marks button[data-mark=text] { grid-column: span 3; }
+.mlist li.mk { display: grid; grid-template-columns: 1fr auto auto; gap: 4px 6px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 7px; background: #fbfaf6; }
+.mlist li.mk b { font-size: 13px; }
+.mlist li.mk input[type=text] { grid-column: 1 / -1; width: 100%; padding: 4px 7px; font: inherit; font-size: 13px; border: 1px solid #c9c3b6; border-radius: 5px; }
+.mlist li.mk .msz { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink2); }
+.mlist li.mk .msz input { flex: 1; accent-color: var(--red); }
+.mlist li.mk input[type=color] { width: 28px; height: 24px; padding: 0 2px; border: 1px solid #c9c3b6; border-radius: 5px; background: #fff; }
+
+/* ---- printed-size close-up */
+#loupe { position: absolute; right: 16px; bottom: 16px; margin: 0; background: #fff; border-radius: 10px; padding: 6px 6px 0;
+  box-shadow: 0 8px 28px rgba(27, 39, 51, .35); z-index: 3; }
+#loupe canvas { display: block; width: 300px; height: 300px; border-radius: 6px; }
+#loupe figcaption { display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 600; padding: 4px 2px; }
+#loupe figcaption button { padding: 0 8px; font-size: 16px; line-height: 1.3; }
+@media (max-width: 860px) { #loupe canvas { width: 200px; height: 200px; } }

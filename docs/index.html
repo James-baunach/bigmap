@@ -21,14 +21,21 @@
   </g></svg>
   <div>
     <h1 id="appTitle">Louisville Wall Map Maker</h1>
-    <p>Size it to your wall, frame the part of the city you want, and print it on your own printer. <a href="poster.html">Or print any picture this big.</a></p>
+    <p>Size it to your wall, frame the part of the city you want, and print it on your own printer.</p>
   </div>
 </header>
 
 <main>
   <aside id="panel">
-    <section>
-      <h2><span>&#9679;</span> Place</h2>
+    <section class="mode">
+      <div class="seg" role="radiogroup" aria-label="What to make">
+        <label><input type="radio" name="mode" value="map" checked><b>Map</b><small>Any place in the US</small></label>
+        <label><input type="radio" name="mode" value="poster"><b>Poster</b><small>From your own picture</small></label>
+      </div>
+    </section>
+
+    <section class="m-map">
+      <h2>Place</h2>
       <p class="hint" id="areaNow">Showing: <b>Louisville, Kentucky</b> (built in, with neighborhoods, names and terrain)</p>
       <div class="find">
         <label class="lbl" for="areaQ">Map somewhere else in the US</label>
@@ -42,12 +49,12 @@
         </label>
         <ul id="areaRes" class="results"></ul>
         <p class="hint" id="areaMsg" role="status" aria-live="polite"></p>
-        <p class="hint small">Other places are downloaded from OpenStreetMap as you use them, which can take a minute or two. Street names, neighborhoods, terrain, landmarks and old-chart details are only available for Louisville.</p>
+        <p class="hint small">Other places are downloaded from OpenStreetMap as you use them, which can take a minute or two. Street names, neighborhood highlights, terrain, landmarks and old-chart details are only available for Louisville (see "Louisville specific").</p>
         <p class="hint" id="backLou" hidden><a href="./">Back to the built-in Louisville map</a></p>
       </div>
     </section>
 
-    <section>
+    <section class="m-map">
       <h2><span>1</span> Wall size</h2>
       <div class="dims">
         <label>Width
@@ -70,7 +77,7 @@
       <p class="hint note" id="posterNote" hidden>This is a poster size. Use "Download single sheet" below and take the PDF to a print shop or a large-format printer.</p>
     </section>
 
-    <section>
+    <section class="m-map">
       <h2><span>2</span> Paper</h2>
       <div class="seg" role="radiogroup" aria-label="Paper size">
         <label><input type="radio" name="paper" value="letter" checked><b>Letter</b><small>8.5 x 11 in</small></label>
@@ -92,38 +99,60 @@
       <p class="hint note" id="wholeNote" hidden></p>
     </section>
 
-    <section>
+    <section class="m-map">
       <h2><span>3</span> Style</h2>
       <div id="themes" class="themes"></div>
-      <p class="hint">Drawing:</p>
+      <p class="hint subhead">Drawing</p>
       <div class="seg" role="radiogroup" aria-label="Drawing">
         <label><input type="radio" name="draw" value="clean" checked><b>Clean</b><small>Crisp lines</small></label>
-        <label><input type="radio" name="draw" value="ink"><b>Hand-drawn ink</b><small>Wobbly pen lines</small></label>
-        <label><input type="radio" name="draw" value="pencil"><b>Pencil sketch</b><small>Grey and hatched</small></label>
-        <label><input type="radio" name="draw" value="block"><b>Block print</b><small>Bold and carved</small></label>
+        <label><input type="radio" name="draw" value="ink"><b>Hand-drawn ink</b><small>Wobbly pen, doubled roads</small></label>
+        <label><input type="radio" name="draw" value="pencil"><b>Pencil sketch</b><small>Grey and cross-hatched</small></label>
+        <label><input type="radio" name="draw" value="block"><b>Block print</b><small>Thick carved lines</small></label>
       </div>
-      <p class="hint">Detail:</p>
+      <p class="hint subhead">Detail</p>
       <div class="seg" role="radiogroup" aria-label="Detail">
         <label><input type="radio" name="detail" value="full" checked><b>Full</b><small>Every building and path</small></label>
-        <label><input type="radio" name="detail" value="simple"><b>Simplified</b><small>Fewer small things</small></label>
+        <label><input type="radio" name="detail" value="simple"><b>Simplified</b><small>Smooth roads, no small stuff</small></label>
       </div>
-      <p class="hint note" id="styleHint" hidden>Zoom in to see the drawing style in the preview. The printed pages will have it.</p>
-      <p class="hint">Optional illustrated touches (work with any style):</p>
-      <div class="checks">
-        <label><input id="oTrees" type="checkbox"> Little trees in the woods</label>
-        <label><input id="oWaves" type="checkbox"> Ripples on the water</label>
-        <label><input id="oShadows" type="checkbox"> Building outlines and shadows</label>
+      <p class="hint subhead">Illustrated touches</p>
+      <div class="checks tight">
+        <label><input id="oTrees" type="checkbox"> Little trees in parks and woods</label>
+        <label><input id="oWaves" type="checkbox"> Wave ripples on the water</label>
+        <label><input id="oShadows" type="checkbox"> Raised buildings with shadows</label>
       </div>
+      <button id="loupeBtn" type="button" class="wide">Show a close-up at printed size</button>
+      <p class="hint">Drawing styles and touches are sized for the printed wall map, so zoomed out they are too small to see on screen. The close-up shows exactly how a piece of your map will look on paper. Hover over the map to move it.</p>
+
+      <p class="hint subhead">Your own colors</p>
+      <div class="checks tight">
+        <label><input id="oCustom" type="checkbox"> Use my own colors</label>
+      </div>
+      <div class="colors" id="colorBox">
+        <label><input id="cLand" type="color" value="#ffffff">Land</label>
+        <label><input id="cWater" type="color" value="#8fc3d8">Water</label>
+        <label><input id="cGreen" type="color" value="#9cc58a">Parks</label>
+        <label><input id="cRoad" type="color" value="#1b2733">Roads</label>
+        <label><input id="cHwy" type="color" value="#a8232c">Highways</label>
+        <label><input id="cBldg" type="color" value="#bdb1a2">Buildings</label>
+      </div>
+
+      <label class="row">Map shape
+        <select id="mShape">
+          <option value="rect">Rectangle</option>
+          <option value="round">Rounded corners</option>
+          <option value="circle">Circle</option>
+          <option value="oval">Oval</option>
+          <option value="heart">Heart</option>
+        </select>
+      </label>
+      <p class="hint">Outside the shape is left as plain paper. The border frame is only drawn on rectangles.</p>
     </section>
 
-    <section>
+    <section class="m-map">
       <h2><span>4</span> Position the map</h2>
       <p class="hint">Drag the map to move it. Scroll, pinch or use the slider to zoom, right down to a single neighborhood.</p>
       <label class="row">Zoom
         <input id="zoom" type="range" min="0" max="1000" value="0">
-      </label>
-      <label class="row lou">Jump to
-        <select id="place"><option value="">Choose a neighborhood...</option></select>
       </label>
       <div class="find">
         <label class="lbl" for="addr">Find an address</label>
@@ -140,52 +169,16 @@
         <label><input id="oBorder" type="checkbox" checked> Border frame</label>
         <label><input id="oCompass" type="checkbox" checked> Compass rose</label>
         <label><input id="oRings" type="checkbox" checked> Distance rings from <span id="ringsFrom">downtown</span></label>
+        <label><input id="oOrnate" type="checkbox"> Ornate compass and ribbon title</label>
         <label><input id="oGrid" type="checkbox" checked> Show page seams (preview only)</label>
       </div>
     </section>
 
-    <section>
-      <h2><span>5</span> Highlights, names and terrain</h2>
-      <p class="hint">All optional and off by default. With none of these, the map stays unlabeled.</p>
-      <label class="row lou">Highlight a neighborhood
-        <select id="hood"><option value="">None</option></select>
-      </label>
-      <div class="btns lou">
-        <button id="hoodFit" type="button" disabled>Fit map to it</button>
-      </div>
-      <p class="hint lou">The rest of the map fades back and the boundary gets an outline.</p>
-      <div class="checks">
-        <label class="lou"><input id="oStreets" type="checkbox"> Street names</label>
-        <label class="lou"><input id="oPlaces" type="checkbox"> Neighborhood and city names</label>
-        <label class="lou"><input id="oTerrain" type="checkbox"> Terrain shading</label>
-        <label class="lou"><input id="oLandmarks" type="checkbox"> Landmark drawings</label>
-      </div>
-      <p class="hint">Lettering for names and the title:</p>
-      <div class="seg thirds" role="radiogroup" aria-label="Lettering">
-        <label><input type="radio" name="lettering" value="plain" checked><b>Plain</b><small>Simple type</small></label>
-        <label><input type="radio" name="lettering" value="hand"><b>Hand-lettered</b><small>Friendly</small></label>
-        <label><input type="radio" name="lettering" value="antique"><b>Antique</b><small>Engraved</small></label>
-      </div>
-      <p class="hint subhead">Old chart details</p>
-      <div class="checks tight">
-        <label class="lou"><input id="oShore" type="checkbox"> Shore lines on the water</label>
-        <label class="lou"><input id="oHach" type="checkbox"> Hachured hills</label>
-        <label><input id="oOrnate" type="checkbox"> Ornate compass and ribbon title</label>
-      </div>
-      <p class="hint lou">Landmark drawings mark about two dozen well-known places. Hachures are fine strokes down the slopes.</p>
-      <label class="row lou">Terrain strength
-        <input id="terrAmt" type="range" min="10" max="100" step="5" value="60" disabled>
-        <output id="terrVal">60%</output>
-      </label>
-      <p class="hint lou">Street names show up as you zoom in. Small streets appear at about neighborhood scale.</p>
-      <p class="hint" id="layerMsg" role="status" aria-live="polite"></p>
-    </section>
-
-    <section>
-      <h2><span>6</span> Title and markers</h2>
+    <section class="m-map">
+      <h2><span>5</span> Title, markers and notes</h2>
       <p class="hint">Optional. With no title, the map stays unlabeled.</p>
       <label class="row">Title
-        <input id="tTitle" class="txt" type="text" maxlength="60" placeholder="e.g. The Highlands" autocomplete="off">
+        <input id="tTitle" class="txt" type="text" maxlength="60" placeholder="e.g. Our first home" autocomplete="off">
       </label>
       <label class="row">Subtitle
         <input id="tSub" class="txt" type="text" maxlength="80" placeholder="e.g. The Miller family, 2026" autocomplete="off">
@@ -197,19 +190,155 @@
           <option value="tc">Top center</option>
         </select>
       </label>
-      <p class="hint">Add a marker:</p>
+      <p class="hint subhead">Lettering</p>
+      <div class="seg thirds" role="radiogroup" aria-label="Lettering">
+        <label><input type="radio" name="lettering" value="plain" checked><b>Plain</b><small>Simple type</small></label>
+        <label><input type="radio" name="lettering" value="hand"><b>Hand-lettered</b><small>Friendly</small></label>
+        <label><input type="radio" name="lettering" value="antique"><b>Antique</b><small>Engraved</small></label>
+      </div>
+      <p class="hint subhead">Add a marker or a note, then click the map</p>
       <div class="marks">
         <button type="button" data-mark="heart" aria-pressed="false">Heart</button>
         <button type="button" data-mark="star" aria-pressed="false">Star</button>
         <button type="button" data-mark="house" aria-pressed="false">House</button>
         <button type="button" data-mark="pin" aria-pressed="false">Pin</button>
+        <button type="button" data-mark="flag" aria-pressed="false">Flag</button>
+        <button type="button" data-mark="dot" aria-pressed="false">Dot</button>
+        <button type="button" data-mark="text" aria-pressed="false">Note (words only)</button>
       </div>
+      <label class="row">New marker size
+        <input id="mSize" type="range" min="0.5" max="12" step="0.25" value="2">
+        <output id="mSizeVal">2 in</output>
+      </label>
       <p class="hint" id="mHint" role="status" aria-live="polite"></p>
       <ul id="mList" class="mlist"></ul>
+      <div class="checks tight">
+        <label><input id="oPath" type="checkbox"> Dotted path joining the markers, in order</label>
+      </div>
       <button id="mClear" type="button" class="small" hidden>Remove all markers</button>
+      <p class="hint">Sizes are the printed size on the wall. Each marker can have its own size, color and a short label.</p>
     </section>
 
-    <section class="summary">
+    <section class="m-map lou">
+      <h2><span>&#9733;</span> Louisville specific</h2>
+      <p class="hint">Extras built just for the Louisville map. All optional and off by default.</p>
+      <label class="row">Jump to
+        <select id="place"><option value="">Choose a neighborhood...</option></select>
+      </label>
+      <label class="row">Highlight a neighborhood
+        <select id="hood"><option value="">None</option></select>
+      </label>
+      <div class="btns">
+        <button id="hoodFit" type="button" disabled>Fit map to it</button>
+      </div>
+      <p class="hint">The rest of the map fades back and the boundary gets an outline.</p>
+      <div class="checks">
+        <label><input id="oStreets" type="checkbox"> Street names</label>
+        <label><input id="oPlaces" type="checkbox"> Neighborhood and city names</label>
+        <label><input id="oTerrain" type="checkbox"> Terrain shading</label>
+        <label><input id="oLandmarks" type="checkbox"> Landmark drawings</label>
+        <label><input id="oShore" type="checkbox"> Shore lines on the water (old chart)</label>
+        <label><input id="oHach" type="checkbox"> Hachured hills (old chart)</label>
+      </div>
+      <label class="row">Terrain strength
+        <input id="terrAmt" type="range" min="10" max="100" step="5" value="60" disabled>
+        <output id="terrVal">60%</output>
+      </label>
+      <p class="hint">Street names show up as you zoom in. Landmark drawings mark about two dozen well-known places. Hachures are fine strokes down the slopes.</p>
+      <p class="hint" id="layerMsg" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="m-poster">
+      <h2><span>1</span> Picture</h2>
+      <input id="pFile" type="file" accept="image/*">
+      <p class="hint" id="pFileMsg" role="status" aria-live="polite">JPEG, PNG, WebP or GIF. The picture stays on your device: nothing is uploaded anywhere.</p>
+      <div class="btns">
+        <button id="pRotate" type="button">Rotate 90&deg;</button>
+        <select id="pFilter" aria-label="Color effect">
+          <option value="none">Original colors</option>
+          <option value="bw">Black and white</option>
+          <option value="sepia">Sepia</option>
+          <option value="vivid">Extra vivid</option>
+          <option value="soft">Soft and faded</option>
+        </select>
+      </div>
+    </section>
+
+    <section class="m-poster">
+      <h2><span>2</span> Size</h2>
+      <div class="dims">
+        <label>Width
+          <span class="pair"><input id="pwFt" type="number" min="0" max="16" step="1" value="4" inputmode="numeric"><i>ft</i>
+          <input id="pwIn" type="number" min="0" max="11.5" step="0.5" value="0" inputmode="decimal"><i>in</i></span>
+        </label>
+        <label>Height
+          <span class="pair"><input id="phFt" type="number" min="0" max="16" step="1" value="3" inputmode="numeric"><i>ft</i>
+          <input id="phIn" type="number" min="0" max="11.5" step="0.5" value="0" inputmode="decimal"><i>in</i></span>
+        </label>
+      </div>
+      <div class="btns presets">
+        <button type="button" data-psize="24x36">24 x 36 in</button>
+        <button type="button" data-psize="36x48">3 x 4 ft</button>
+        <button type="button" data-psize="48x72">4 x 6 ft</button>
+        <button type="button" data-psize="72x96">6 x 8 ft</button>
+      </div>
+      <div class="checks">
+        <label><input id="pLock" type="checkbox" checked> Keep the picture's shape (change one side, the other follows)</label>
+      </div>
+      <label class="row">If the shapes differ
+        <select id="pFit">
+          <option value="fill">Fill, trimming the edges</option>
+          <option value="fit">Fit whole picture, white space</option>
+        </select>
+      </label>
+      <label class="row">White border
+        <select id="pEdge">
+          <option value="36">0.5 in</option>
+          <option value="72">1 in</option>
+          <option value="144">2 in</option>
+          <option value="18">0.25 in (thinnest your printer allows)</option>
+        </select>
+      </label>
+      <p class="hint">The finished poster, including the white border, comes out exactly this size. Between 1 and 16 ft each way. When trimming, drag the preview to choose which part shows.</p>
+      <p class="hint note" id="pDpiNote" hidden></p>
+    </section>
+
+    <section class="m-poster">
+      <h2><span>3</span> Paper</h2>
+      <div class="seg" role="radiogroup" aria-label="Paper size">
+        <label><input type="radio" name="ppaper" value="letter" checked><b>Letter</b><small>8.5 x 11 in</small></label>
+        <label><input type="radio" name="ppaper" value="legal"><b>Legal</b><small>8.5 x 14 in</small></label>
+        <label><input type="radio" name="ppaper" value="a4"><b>A4</b><small>210 x 297 mm</small></label>
+        <label><input type="radio" name="ppaper" value="tabloid"><b>Tabloid</b><small>11 x 17 in</small></label>
+      </div>
+      <label class="row">Page direction
+        <select id="pOrient">
+          <option value="auto">Fewest pages (automatic)</option>
+          <option value="portrait">Portrait</option>
+          <option value="landscape">Landscape</option>
+        </select>
+      </label>
+      <div class="checks">
+        <label><input id="pGrid" type="checkbox" checked> Show page seams (preview only)</label>
+      </div>
+    </section>
+
+    <section class="summary m-poster">
+      <dl>
+        <div><dt>Pages</dt><dd id="pPages">-</dd></div>
+        <div><dt>Print sharpness</dt><dd id="pDpi">-</dd></div>
+      </dl>
+    </section>
+
+    <section class="m-poster">
+      <h2><span>4</span> Download</h2>
+      <button id="pDlPages" class="primary" type="button" disabled>Download printable pages (PDF)</button>
+      <button id="pDlSheet" type="button" disabled>Download single sheet (PDF, for a print shop)</button>
+      <div id="pProgress" class="progress" hidden><div id="pBar" class="bar"></div><span id="pPtext"></span></div>
+      <p class="hint">Page 1 of the printable PDF is an assembly guide. Print at Actual size / 100%, trim each page on the marks, and butt the edges together.</p>
+    </section>
+
+    <section class="summary m-map">
       <dl>
         <div><dt>Pages</dt><dd id="sPages">-</dd></div>
         <div><dt>Map scale</dt><dd id="sScale">-</dd></div>
@@ -219,8 +348,8 @@
       </dl>
     </section>
 
-    <section>
-      <h2><span>7</span> Download</h2>
+    <section class="m-map">
+      <h2><span>6</span> Download</h2>
       <button id="dlPages" class="primary" type="button">Download printable pages (PDF)</button>
       <button id="dlSheet" type="button">Download single sheet (PDF, for a print shop)</button>
       <div class="pngrow">
@@ -236,12 +365,16 @@
     <footer>Map data &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>. Other places: tiles from <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> (OpenMapTiles schema). Neighborhood boundaries: LOJIC / Louisville Metro open data. Elevation: Mapzen / AWS Terrain Tiles (USGS 3DEP and other sources). Lettering fonts: Patrick Hand and IM Fell English, used under the SIL Open Font License. The preview is lower resolution than the PDF.</footer>
   </aside>
 
-  <div id="stage"><canvas id="view" aria-label="Map preview. Drag to move, scroll to zoom."></canvas></div>
+  <div id="stage"><canvas id="view" aria-label="Map preview. Drag to move, scroll to zoom."></canvas>
+    <canvas id="pview" aria-label="Poster preview. Drag to move the picture when it is trimmed."></canvas>
+    <figure id="loupe" hidden><canvas id="loupeCan"></canvas><figcaption>Actual printed size <button id="loupeClose" type="button" aria-label="Close the close-up">&times;</button></figcaption></figure>
+  </div>
 </main>
 
 <script src="mapdata.js"></script>
 <script src="live.js"></script>
 <script src="picker.js"></script>
 <script src="app.js"></script>
+<script src="poster.js"></script>
 </body>
 </html>

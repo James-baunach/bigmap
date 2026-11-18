@@ -2,93 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Giant Picture Poster Maker</title>
-<meta name="description" content="Turn any picture into a giant poster sized to your wall and print it on your own printer, one sheet at a time.">
-<link rel="icon" href="data:,">
-<link rel="stylesheet" href="style.css">
+<meta http-equiv="refresh" content="0; url=./?mode=poster">
+<link rel="canonical" href="./?mode=poster">
 </head>
 <body>
-<header>
-  <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 4h18v16H3zm2 2v9l4-4 4 4 3-3 3 3V6zm11 1.5a1.5 1.5 0 110 3 1.5 1.5 0 010-3z"/></svg>
-  <div>
-    <h1>Giant Picture Poster Maker</h1>
-    <p>Upload any picture, size it to your wall, and print it on your own printer. <a href="./">Or make a wall map.</a></p>
-  </div>
-</header>
-
-<main>
-  <aside id="panel">
-    <section>
-      <h2><span>1</span> Picture</h2>
-      <input id="file" type="file" accept="image/*">
-      <p class="hint" id="fileMsg" role="status" aria-live="polite">JPEG, PNG, WebP or GIF. The picture stays on your device: nothing is uploaded anywhere.</p>
-    </section>
-
-    <section>
-      <h2><span>2</span> Size</h2>
-      <div class="dims">
-        <label>Width
-          <span class="pair"><input id="wFt" type="number" min="0" max="16" step="1" value="4" inputmode="numeric"><i>ft</i>
-          <input id="wIn" type="number" min="0" max="11.5" step="0.5" value="0" inputmode="decimal"><i>in</i></span>
-        </label>
-        <label>Height
-          <span class="pair"><input id="hFt" type="number" min="0" max="16" step="1" value="3" inputmode="numeric"><i>ft</i>
-          <input id="hIn" type="number" min="0" max="11.5" step="0.5" value="0" inputmode="decimal"><i>in</i></span>
-        </label>
-      </div>
-      <div class="checks">
-        <label><input id="lock" type="checkbox" checked> Keep the picture's shape (change one side, the other follows)</label>
-      </div>
-      <label class="row">If the shapes differ
-        <select id="fit">
-          <option value="fill">Fill, trimming the edges</option>
-          <option value="fit">Fit whole picture, white space</option>
-        </select>
-      </label>
-      <p class="hint">The finished poster, including a 0.5 in white paper border, comes out exactly this size. Between 1 and 16 ft each way. When trimming, drag the preview to choose which part shows.</p>
-      <p class="hint note" id="dpiNote" hidden></p>
-    </section>
-
-    <section>
-      <h2><span>3</span> Paper</h2>
-      <div class="seg" role="radiogroup" aria-label="Paper size">
-        <label><input type="radio" name="paper" value="letter" checked><b>Letter</b><small>8.5 x 11 in</small></label>
-        <label><input type="radio" name="paper" value="legal"><b>Legal</b><small>8.5 x 14 in</small></label>
-        <label><input type="radio" name="paper" value="a4"><b>A4</b><small>210 x 297 mm</small></label>
-        <label><input type="radio" name="paper" value="tabloid"><b>Tabloid</b><small>11 x 17 in</small></label>
-      </div>
-      <label class="row">Page direction
-        <select id="orient">
-          <option value="auto">Fewest pages (automatic)</option>
-          <option value="portrait">Portrait</option>
-          <option value="landscape">Landscape</option>
-        </select>
-      </label>
-      <div class="checks">
-        <label><input id="grid" type="checkbox" checked> Show page seams (preview only)</label>
-      </div>
-    </section>
-
-    <section class="summary">
-      <dl>
-        <div><dt>Pages</dt><dd id="sPages">-</dd></div>
-        <div><dt>Print sharpness</dt><dd id="sDpi">-</dd></div>
-      </dl>
-    </section>
-
-    <section>
-      <h2><span>4</span> Download</h2>
-      <button id="dlPages" class="primary" type="button" disabled>Download printable pages (PDF)</button>
-      <button id="dlSheet" type="button" disabled>Download single sheet (PDF, for a print shop)</button>
-      <div id="progress" hidden><div id="bar"></div><span id="ptext"></span></div>
-      <p class="hint">Page 1 of the printable PDF is an assembly guide. Print at Actual size / 100%, trim each page on the marks, and butt the edges together.</p>
-    </section>
-  </aside>
-
-  <div id="stage"><canvas id="view" aria-label="Poster preview. Drag to move the picture when it is trimmed."></canvas></div>
-</main>
-
-<script src="poster.js"></script>
+<p>The poster maker is now part of the main page: <a href="./?mode=poster">open it here</a>.</p>
 </body>
 </html>

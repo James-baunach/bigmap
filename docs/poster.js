@@ -1,12 +1,14 @@
-/* Giant Picture Poster Maker: any picture, sized to the wall, split across home-printer pages (same page layout,
-   trim marks and assembly steps as the wall map). Everything happens on this device. */
+/* Poster mode of the Wall Map Maker page: any picture, sized to the wall, split across home-printer pages (same page
+   layout, trim marks and assembly steps as the wall map). Everything happens on this device. Also runs the Map / Poster
+   switch at the top of the panel. */
 (() => {
 'use strict';
 const $ = id => document.getElementById(id);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const PAPERS = { letter: [612, 792], legal: [612, 1008], a4: [595.28, 841.89], tabloid: [792, 1224] };
-const EDGE = 36, BLEED = 10.8, MAX_DPI = 300;
-const state = { img: null, name: 'poster', wallW: 48, wallH: 36, lock: true, fit: 'fill', paper: 'letter', orient: 'auto', grid: true, px: .5, py: .5 };
+let EDGE = 36;
+const BLEED = 10.8, MAX_DPI = 300;
+const state = { orig: null, img: null, rot: 0, filter: 'none', name: 'poster', wallW: 48, wallH: 36, lock: true, fit: 'fill', paper: 'letter', orient: 'auto', grid: true, px: .5, py: .5 };
 
 /* ---- layout: same rules as the map (every page full except the last, which shares with its neighbour if thin) */
 function spans(total, full, n) {
@@ -41,11 +43,12 @@ const f2 = v => (Math.round(v * 100) / 100).toString();
 const feet = inch => { const ft = Math.floor(inch / 12 + 1e-9), i = Math.round((inch - ft * 12) * 10) / 10; return ft ? `${ft} ft${i ? ' ' + i + ' in' : ''}` : `${i} in`; };
 
 /* ---- preview */
-const canvas = $('view'), stage = $('stage');
+const canvas = $('pview'), stage = $('stage');
 let raf = 0, disp = 1;
 const schedule = () => { if (!raf) raf = requestAnimationFrame(render); };
 function render() {
   raf = 0;
+  if (document.body.dataset.mode !== 'poster') return;
   const L = layout();
   disp = Math.max(.001, Math.min((stage.clientWidth - 44) / L.W, (stage.clientHeight - 44) / L.H));
   const cw = Math.round(L.W * disp), ch = Math.round(L.H * disp), dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -75,15 +78,15 @@ function render() {
   }
   ctx.restore();
   canvas.style.cursor = state.img && state.fit === 'fill' ? 'grab' : 'default';
-  $('sPages').textContent = `${L.cols * L.rows} (${L.rows} x ${L.cols}, ${L.name})`;
+  $('pPages').textContent = `${L.cols * L.rows} (${L.rows} x ${L.cols}, ${L.name})`;
   if (state.img) {
     const dpi = Math.round(1 / (placement(L).s / 72));
-    $('sDpi').textContent = dpi + ' dpi';
-    const note = $('dpiNote');
+    $('pDpi').textContent = dpi + ' dpi';
+    const note = $('pDpiNote');
     note.hidden = dpi >= 100;
     note.textContent = dpi < 50 ? `At this size the picture has only ${dpi} pixels per inch, so it will look blocky up close. A larger original, or a smaller poster, will look sharper.`
       : `At this size the picture has ${dpi} pixels per inch: fine from a few steps back, a little soft up close.`;
-  } else $('sDpi').textContent = '-';
+  } else $('pDpi').textContent = '-';
 }
 new ResizeObserver(schedule).observe(stage);
 
@@ -109,37 +112,79 @@ canvas.addEventListener('pointerup', endDrag); canvas.addEventListener('pointerc
 function readSide(ft, inch) { return clamp((+$(ft).value || 0) * 12 + (+$(inch).value || 0), 12, 192); }
 function writeSide(ft, inch, v) { v = Math.round(v * 2) / 2; $(ft).value = Math.floor(v / 12); $(inch).value = v - Math.floor(v / 12) * 12; }
 function onSize(which) {
-  state.wallW = readSide('wFt', 'wIn'); state.wallH = readSide('hFt', 'hIn');
+  state.wallW = readSide('pwFt', 'pwIn'); state.wallH = readSide('phFt', 'phIn');
   if (state.lock && state.img) {
     const ar = state.img.width / state.img.height;          // the picture area keeps the picture's shape; the border is fixed
     if (which === 'w') state.wallH = clamp((state.wallW * 72 - 2 * EDGE) / ar / 72 + 2 * EDGE / 72, 12, 192);
     else state.wallW = clamp((state.wallH * 72 - 2 * EDGE) * ar / 72 + 2 * EDGE / 72, 12, 192);
   }
-  writeSide('wFt', 'wIn', state.wallW); writeSide('hFt', 'hIn', state.wallH);
-  state.wallW = readSide('wFt', 'wIn'); state.wallH = readSide('hFt', 'hIn');
+  writeSide('pwFt', 'pwIn', state.wallW); writeSide('phFt', 'phIn', state.wallH);
+  state.wallW = readSide('pwFt', 'pwIn'); state.wallH = readSide('phFt', 'phIn');
   schedule();
 }
-['wFt', 'wIn'].forEach(id => $(id).addEventListener('change', () => onSize('w')));
-['hFt', 'hIn'].forEach(id => $(id).addEventListener('change', () => onSize('h')));
-$('lock').addEventListener('change', e => { state.lock = e.target.checked; onSize('w'); });
-$('fit').addEventListener('change', e => { state.fit = e.target.value; schedule(); });
-document.querySelectorAll('input[name=paper]').forEach(r => r.addEventListener('change', () => { state.paper = r.value; schedule(); }));
-$('orient').addEventListener('change', e => { state.orient = e.target.value; schedule(); });
-$('grid').addEventListener('change', e => { state.grid = e.target.checked; schedule(); });
+['pwFt', 'pwIn'].forEach(id => $(id).addEventListener('change', () => onSize('w')));
+['phFt', 'phIn'].forEach(id => $(id).addEventListener('change', () => onSize('h')));
+$('pLock').addEventListener('change', e => { state.lock = e.target.checked; onSize('w'); });
+$('pFit').addEventListener('change', e => { state.fit = e.target.value; schedule(); });
+$('pEdge').addEventListener('change', e => { EDGE = +e.target.value || 36; onSize('w'); });
+document.querySelectorAll('input[name=ppaper]').forEach(r => r.addEventListener('change', () => { state.paper = r.value; schedule(); }));
+$('pOrient').addEventListener('change', e => { state.orient = e.target.value; schedule(); });
+$('pGrid').addEventListener('change', e => { state.grid = e.target.checked; schedule(); });
+document.querySelectorAll('[data-psize]').forEach(b => b.addEventListener('click', () => {
+  const [w, h] = b.dataset.psize.split('x').map(Number);
+  let W = w, H = h;
+  if (state.img && (state.img.width > state.img.height) !== (W > H)) [W, H] = [H, W];   // match the picture's direction
+  writeSide('pwFt', 'pwIn', W); writeSide('phFt', 'phIn', H);
+  const keep = state.lock; state.lock = false; onSize('w'); state.lock = keep;
+}));
 
-$('file').addEventListener('change', async e => {
+/* rotation and color effect are baked into a working canvas once, so the preview and the PDF share it */
+const FILTERS = {
+  none: null,
+  bw: (r, g, b) => { const y = .299 * r + .587 * g + .114 * b; return [y, y, y]; },
+  sepia: (r, g, b) => [r * .393 + g * .769 + b * .189, r * .349 + g * .686 + b * .168, r * .272 + g * .534 + b * .131],
+  vivid: (r, g, b) => { const y = .299 * r + .587 * g + .114 * b, s = 1.55, c = v => (y + (v - y) * s - 128) * 1.08 + 128; return [c(r), c(g), c(b)]; },
+  soft: (r, g, b) => { const y = .299 * r + .587 * g + .114 * b, s = .55, c = v => (y + (v - y) * s - 128) * .85 + 140; return [c(r), c(g), c(b)]; },
+};
+function bake() {
+  const o = state.orig;
+  if (!o) return;
+  const turn = state.rot % 180 !== 0, w = turn ? o.height : o.width, h = turn ? o.width : o.height;
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  ctx.translate(w / 2, h / 2); ctx.rotate(state.rot * Math.PI / 180); ctx.drawImage(o, -o.width / 2, -o.height / 2);
+  const f = FILTERS[state.filter];
+  if (f) {
+    const step = 2048;                                     // in bands, so huge pictures do not need one giant buffer
+    for (let y0 = 0; y0 < h; y0 += step) {
+      const bh = Math.min(step, h - y0), id = ctx.getImageData(0, y0, w, bh), d = id.data;
+      for (let i = 0; i < d.length; i += 4) { const v = f(d[i], d[i + 1], d[i + 2]); d[i] = v[0]; d[i + 1] = v[1]; d[i + 2] = v[2]; }
+      ctx.putImageData(id, 0, y0);
+    }
+  }
+  state.img = c;
+}
+$('pRotate').addEventListener('click', () => {
+  if (!state.orig) return;
+  state.rot = (state.rot + 90) % 360; bake();
+  if (state.lock) { const w = state.wallW; writeSide('pwFt', 'pwIn', state.wallH); writeSide('phFt', 'phIn', w); }
+  onSize('w');
+});
+$('pFilter').addEventListener('change', e => { state.filter = e.target.value; bake(); schedule(); });
+
+$('pFile').addEventListener('change', async e => {
   const f = e.target.files && e.target.files[0];
   if (!f) return;
-  $('fileMsg').textContent = 'Opening...';
+  $('pFileMsg').textContent = 'Opening...';
   try {
     const bmp = await createImageBitmap(f, { imageOrientation: 'from-image' });
-    state.img = bmp; state.px = state.py = .5;
+    state.orig = bmp; state.rot = 0; bake(); state.px = state.py = .5;
     state.name = (f.name.replace(/\.[^.]*$/, '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'poster').slice(0, 40);
-    $('fileMsg').textContent = `${f.name}: ${bmp.width} x ${bmp.height} pixels. It stays on your device.`;
-    $('dlPages').disabled = $('dlSheet').disabled = false;
+    $('pFileMsg').textContent = `${f.name}: ${bmp.width} x ${bmp.height} pixels. It stays on your device.`;
+    $('pDlPages').disabled = $('pDlSheet').disabled = false;
     onSize('w');
   } catch (err) {
-    $('fileMsg').textContent = 'Could not open that file as a picture. Try a JPEG or PNG.';
+    $('pFileMsg').textContent = 'Could not open that file as a picture. Try a JPEG or PNG.';
   }
 });
 
@@ -188,7 +233,7 @@ async function jpegOf(L, p, bx0, by0, bw, bh) {
   return { w, h, data: new Uint8Array(await b.arrayBuffer()) };
 }
 function progress(frac, text) {
-  $('progress').hidden = false; $('bar').style.width = (frac * 100).toFixed(1) + '%'; $('ptext').textContent = text;
+  $('pProgress').hidden = false; $('pBar').style.width = (frac * 100).toFixed(1) + '%'; $('pPtext').textContent = text;
 }
 function save(blob, name) {
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
@@ -262,18 +307,39 @@ async function build(mode) {
   }
   return { blob: doc.blob(), name: `${state.name}-${sizeTxt}-${total}pages-${state.paper}.pdf` };
 }
-for (const [id, mode] of [['dlPages', 'pages'], ['dlSheet', 'sheet']]) {
+for (const [id, mode] of [['pDlPages', 'pages'], ['pDlSheet', 'sheet']]) {
   $(id).addEventListener('click', async () => {
     if (!state.img) return;
-    $('dlPages').disabled = $('dlSheet').disabled = true;
+    $('pDlPages').disabled = $('pDlSheet').disabled = true;
     try {
       const { blob, name } = await build(mode);
       save(blob, name);
       progress(1, `Done: ${name} (${(blob.size / 1048576).toFixed(1)} MB)`);
     } catch (err) { progress(0, 'Something went wrong: ' + err.message); }
-    finally { $('dlPages').disabled = $('dlSheet').disabled = false; }
+    finally { $('pDlPages').disabled = $('pDlSheet').disabled = false; }
   });
 }
-window.__poster = { state, build, layout, onSize };
+/* ---- Map / Poster switch (also in the page address as ?mode=poster, so links and reloads keep it) */
+const HEAD = { map: [null, null], poster: ['Giant Picture Poster Maker', 'Upload any picture, size it to your wall, and print it on your own printer.'] };
+const headEl = $('appTitle'), subEl = headEl.parentElement.querySelector('p');
+HEAD.map = [headEl.textContent, subEl.textContent];
+function setMode(m, push) {
+  m = m === 'poster' ? 'poster' : 'map';
+  document.body.dataset.mode = m;
+  document.querySelectorAll('input[name=mode]').forEach(r => { r.checked = r.value === m; });
+  if (m === 'map' && HEAD.map[0] === null) HEAD.map = [headEl.textContent, subEl.textContent];
+  [headEl.textContent, subEl.textContent] = HEAD[m];
+  document.title = HEAD[m][0];
+  if (push) {
+    const u = new URL(location.href);
+    if (m === 'poster') u.searchParams.set('mode', 'poster'); else u.searchParams.delete('mode');
+    try { history.replaceState(null, '', u.pathname + u.search + u.hash); } catch (e) { /* ignore */ }
+  }
+  window.dispatchEvent(new Event('resize'));
+  schedule();
+}
+document.querySelectorAll('input[name=mode]').forEach(r => r.addEventListener('change', () => { if (r.checked) setMode(r.value, true); }));
+window.__poster = { state, build, layout, onSize, setMode };
 onSize('w');
+setMode(new URLSearchParams(location.search).get('mode'), false);
 })();
